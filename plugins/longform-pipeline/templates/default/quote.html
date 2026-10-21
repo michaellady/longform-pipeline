@@ -1,0 +1,46 @@
+<!doctype html>
+<!--
+  longform-pipeline default template: QUOTE CARD (1080x1350)
+  Brand-neutral. Replace with a Claude Design export per profile at
+  ~/.config/longform-pipeline/profiles/<profile>/templates/quote.html
+  Placeholders: {{QUOTE}} {{ATTRIBUTION}} {{BRAND}} {{SITE}} {{CAPTION}}
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quote</title>
+<style>
+  :root {
+    --bg: #101418;
+    --ink: #F4F1EA;
+    --muted: #9AA3AD;
+    --accent: #E8B74A;
+    --font: -apple-system, "SF Pro Display", "Helvetica Neue", Inter, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1080px; height: 1350px; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+  .card { position: relative; width: 1080px; height: 1350px; padding: 96px 88px 120px; display: flex; flex-direction: column; justify-content: space-between; }
+  .body { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; padding-bottom: 80px; }
+  .mark { font-size: 260px; line-height: 0.6; color: var(--accent); font-weight: 900; letter-spacing: -0.08em; height: 150px; }
+  .quote { font-size: 64px; line-height: 1.22; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+  .attr { margin-top: 48px; font-size: 32px; color: var(--muted); font-weight: 500; }
+  .attr::before { content: "— "; color: var(--accent); }
+  .foot { display: flex; justify-content: space-between; align-items: flex-end; border-top: 3px solid var(--accent); padding-top: 32px; }
+  .brand { font-size: 34px; font-weight: 800; letter-spacing: 0.02em; }
+  .site { font-size: 26px; color: var(--muted); }
+</style>
+</head>
+<body>
+<section class="card">
+  <div class="body">
+    <div class="mark">&ldquo;</div>
+    <blockquote class="quote">{{QUOTE}}</blockquote>
+    <div class="attr">{{ATTRIBUTION}}</div>
+  </div>
+  <div class="foot">
+    <div class="brand">{{BRAND}}</div>
+    <div class="site">{{SITE}}</div>
+  </div>
+</section>
+</body>
+</html>

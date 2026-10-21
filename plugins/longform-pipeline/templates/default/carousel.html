@@ -1,0 +1,69 @@
+<!doctype html>
+<!--
+  longform-pipeline default template: TRANSCRIPT CAROUSEL SLIDE (1080x1350)
+  One template renders every slide kind; the body class is kind-{{SLIDE_KIND}}
+  (hook | section | quote | stat | cta) so CSS can restyle per kind.
+  Placeholders: {{SLIDE_KIND}} {{TEXT}} {{SUB}} {{INDEX}} {{TOTAL}} {{BRAND}} {{SITE}}
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Carousel slide</title>
+<style>
+  :root {
+    --bg: #F4F1EA;
+    --ink: #15191E;
+    --muted: #5C6670;
+    --accent: #1F6FEB;
+    --accent-ink: #FFFFFF;
+    --font: -apple-system, "SF Pro Display", "Helvetica Neue", Inter, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1080px; height: 1350px; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+  .slide { position: relative; width: 1080px; height: 1350px; padding: 96px 88px 110px; display: flex; flex-direction: column; justify-content: space-between; }
+  .body { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; padding-bottom: 80px; }
+  .kicker { font-size: 28px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); }
+  .text { font-size: 72px; line-height: 1.15; font-weight: 800; letter-spacing: -0.02em; text-wrap: balance; margin-top: 40px; }
+  .sub { font-size: 36px; line-height: 1.35; color: var(--muted); margin-top: 40px; font-weight: 500; }
+  .foot { display: flex; justify-content: space-between; align-items: center; border-top: 3px solid var(--ink); padding-top: 28px; }
+  .brand { font-size: 30px; font-weight: 800; }
+  .site { font-size: 24px; color: var(--muted); }
+  .page { font-size: 26px; font-weight: 700; color: var(--muted); }
+  .arrow { display: none; font-size: 30px; font-weight: 700; color: var(--accent); margin-top: 48px; }
+
+  /* Per-kind styling. */
+  .kind-hook { background: var(--accent); color: var(--accent-ink); }
+  .kind-hook .kicker, .kind-hook .site, .kind-hook .page, .kind-hook .sub { color: rgba(255,255,255,0.78); }
+  .kind-hook .text { font-size: 92px; }
+  .kind-hook .foot { border-top-color: rgba(255,255,255,0.5); }
+  .kind-hook .arrow { display: block; color: var(--accent-ink); }
+  .kind-section .text { font-size: 64px; }
+  .kind-quote .text { font-size: 60px; font-weight: 700; font-style: italic; }
+  .kind-quote .text::before { content: "\201C"; color: var(--accent); }
+  .kind-quote .text::after { content: "\201D"; color: var(--accent); }
+  .kind-stat .text { font-size: 180px; line-height: 1; color: var(--accent); letter-spacing: -0.04em; }
+  .kind-stat .sub { font-size: 44px; color: var(--ink); font-weight: 700; }
+  .kind-cta { background: var(--ink); color: var(--bg); }
+  .kind-cta .kicker { color: #8CC0FF; }
+  .kind-cta .text { font-size: 76px; }
+  .kind-cta .sub { color: #B8C0C8; }
+  .kind-cta .foot { border-top-color: #4A5560; }
+  .kind-cta .site { color: #B8C0C8; font-size: 34px; font-weight: 700; }
+</style>
+</head>
+<body class="kind-{{SLIDE_KIND}}">
+<section class="slide">
+  <div class="body">
+    <div class="kicker">{{SLIDE_KIND}}</div>
+    <div class="text">{{TEXT}}</div>
+    <div class="sub">{{SUB}}</div>
+    <div class="arrow">Swipe &rarr;</div>
+  </div>
+  <div class="foot">
+    <div class="brand">{{BRAND}}</div>
+    <div class="site">{{SITE}}</div>
+    <div class="page">{{INDEX}} / {{TOTAL}}</div>
+  </div>
+</section>
+</body>
+</html>

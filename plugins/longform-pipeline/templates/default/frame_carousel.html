@@ -1,0 +1,54 @@
+<!doctype html>
+<!--
+  longform-pipeline default template: FRAME CAROUSEL PANEL (1080x1350)
+  Each slide pairs an extracted frame with its panel text.
+  Placeholders: {{FRAME}} {{TEXT}} {{SUB}} {{SLIDE_KIND}} {{INDEX}} {{TOTAL}} {{BRAND}} {{SITE}}
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frame carousel panel</title>
+<style>
+  :root {
+    --bg: #0B0D10;
+    --ink: #F4F1EA;
+    --muted: #AEB6BF;
+    --accent: #E8B74A;
+    --font: -apple-system, "SF Pro Display", "Helvetica Neue", Inter, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1080px; height: 1350px; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+  .card { position: relative; width: 1080px; height: 1350px; display: flex; flex-direction: column; }
+  .frame { flex: 0 0 880px; overflow: hidden; background: #000; position: relative; }
+  .frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pill { position: absolute; top: 40px; left: 40px; background: var(--accent); color: #15191E; font-size: 26px; font-weight: 800; padding: 10px 22px; border-radius: 999px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .band { flex: 1 1 auto; padding: 48px 72px 56px; display: flex; flex-direction: column; justify-content: space-between; }
+  .text { font-size: 52px; line-height: 1.2; font-weight: 800; letter-spacing: -0.01em; text-wrap: balance; }
+  .sub { font-size: 30px; line-height: 1.35; color: var(--muted); margin-top: 20px; }
+  .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 28px; }
+  .brand { font-size: 26px; font-weight: 800; }
+  .site { font-size: 22px; color: var(--muted); }
+  .page { font-size: 24px; font-weight: 700; color: var(--accent); }
+  .kind-hook .text { font-size: 64px; }
+  .kind-cta .band { background: var(--accent); color: #15191E; }
+  .kind-cta .sub, .kind-cta .site { color: #3A3F45; }
+  .kind-cta .page { color: #15191E; }
+</style>
+</head>
+<body class="kind-{{SLIDE_KIND}}">
+<section class="card">
+  <div class="frame"><img src="{{FRAME}}" alt=""><div class="pill">{{SLIDE_KIND}}</div></div>
+  <div class="band">
+    <div>
+      <div class="text">{{TEXT}}</div>
+      <div class="sub">{{SUB}}</div>
+    </div>
+    <div class="foot">
+      <div class="brand">{{BRAND}}</div>
+      <div class="site">{{SITE}}</div>
+      <div class="page">{{INDEX}} / {{TOTAL}}</div>
+    </div>
+  </div>
+</section>
+</body>
+</html>
