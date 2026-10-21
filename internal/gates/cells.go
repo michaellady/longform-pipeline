@@ -87,9 +87,17 @@ func ReadCells(r io.Reader) ([]Cell, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Accept either a bare array (slots/gate/opus interchange) or the object
+	// `brief parse-decision` writes to review/schedule.json ({cells: [...]}).
 	var cells []Cell
 	if err := json.Unmarshal(raw, &cells); err != nil {
-		return nil, fmt.Errorf("not a JSON array of cells: %w", err)
+		var wrapped struct {
+			Cells []Cell `json:"cells"`
+		}
+		if err2 := json.Unmarshal(raw, &wrapped); err2 != nil || wrapped.Cells == nil {
+			return nil, fmt.Errorf("not a JSON array of cells (nor an object with a cells array): %w", err)
+		}
+		cells = wrapped.Cells
 	}
 	for i := range cells {
 		if cells[i].Hashtags == nil {

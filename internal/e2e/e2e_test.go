@@ -495,8 +495,13 @@ func TestPipeline(t *testing.T) {
 	h.wantState(jobDir, model.StateApproved)
 	mustExist(t, filepath.Join(jobDir, "review", "decision.json"))
 	cellsPath := filepath.Join(jobDir, "review", "schedule.json")
-	var cells []cell
-	readJSON(t, cellsPath, &cells)
+	// brief parse-decision writes {schema_version, job_id, cells: [...]}; the
+	// downstream commands accept that object or a bare array.
+	var schedule struct {
+		Cells []cell `json:"cells"`
+	}
+	readJSON(t, cellsPath, &schedule)
+	cells := schedule.Cells
 	if len(cells) != wantCells {
 		t.Fatalf("schedule.json: want %d cells (one per posted clip cell + the full video), got %d:\n%s", wantCells, len(cells), mustPretty(cells))
 	}

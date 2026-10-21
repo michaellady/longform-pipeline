@@ -339,6 +339,7 @@ func opusSchedule(ctx context.Context, client *opusclip.Client, args []string) i
 		fmt.Fprintln(os.Stderr, "opus schedule:", err)
 		return 65
 	}
+	data = unwrapCells(data)
 	var cells []ScheduleCell
 	if err := json.Unmarshal(data, &cells); err != nil {
 		fmt.Fprintln(os.Stderr, "opus schedule: cells must be a JSON array:", err)
@@ -434,4 +435,16 @@ func cellToRequest(cell ScheduleCell, profile *model.Profile) (opusclip.Schedule
 		req.PostDetail.Custom = &opusclip.PostCustom{Description: cell.Description, Privacy: cell.Privacy}
 	}
 	return req, nil
+}
+
+// unwrapCells returns the "cells" array when data is the object that
+// `brief parse-decision` writes to review/schedule.json; otherwise data as is.
+func unwrapCells(data []byte) []byte {
+	var wrapped struct {
+		Cells json.RawMessage `json:"cells"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err == nil && len(wrapped.Cells) > 0 && wrapped.Cells[0] == '[' {
+		return wrapped.Cells
+	}
+	return data
 }
