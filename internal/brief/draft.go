@@ -91,6 +91,7 @@ type StaticInputs struct {
 	Quote       string  `json:"quote,omitempty"`
 	Attribution string  `json:"attribution,omitempty"`
 	TimestampMs int64   `json:"timestamp_ms,omitempty"`
+	Caption     string  `json:"caption,omitempty"` // on-image caption for still; falls back to Static.Caption
 	Slides      []Slide `json:"slides,omitempty"`
 }
 

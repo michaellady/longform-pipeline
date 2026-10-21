@@ -93,6 +93,9 @@ func RenderOne(jobDir string, s brief.Static, opts Options, r *Renderer) (*Resul
 			return nil, err
 		}
 		vars := merge(base, map[string]string{"FRAME": fileURL(frame), "INDEX": "1", "TOTAL": "1"})
+		if s.Inputs.Caption != "" {
+			vars["CAPTION"] = s.Inputs.Caption // the on-image line, not the social caption
+		}
 		p, err := writePage(outDir, "still", tpl, vars)
 		if err != nil {
 			return nil, err
@@ -112,6 +115,9 @@ func RenderOne(jobDir string, s brief.Static, opts Options, r *Renderer) (*Resul
 					return nil, err
 				}
 				vars["FRAME"] = fileURL(frame)
+				if sl.Text != "" {
+					vars["CAPTION"] = sl.Text // each panel carries its own spoken line
+				}
 			}
 			p, err := writePage(outDir, name, tpl, vars)
 			if err != nil {
