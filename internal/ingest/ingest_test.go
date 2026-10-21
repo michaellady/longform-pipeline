@@ -250,6 +250,9 @@ func TestStageNewFileBecomesJobAndRerunIsNoop(t *testing.T) {
 }
 
 func TestStageSkipsGrowingFileInOnceMode(t *testing.T) {
+	if LookPath("ffprobe") == "" {
+		t.Skip("ffprobe not installed: the settled-junk half of this test relies on ffprobe rejecting the file")
+	}
 	setupEnv(t)
 	inbox := filepath.Join(t.TempDir(), "inbox")
 	p := writeProfile(t, "evc", false, inbox)
