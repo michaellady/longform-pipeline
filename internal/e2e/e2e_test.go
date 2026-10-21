@@ -398,17 +398,27 @@ func TestPipeline(t *testing.T) {
 	if clips.FullClipID == "" {
 		t.Fatalf("clips.json must carry full_clip_id")
 	}
-	if len(clips.Clips) != 3 {
-		t.Fatalf("want the fake's 3 shorts clips in clips.json, got %d: %+v", len(clips.Clips), clips.Clips)
-	}
-	bonus := 0
+	// clips[] carries the shorts project's clips plus the full render (the one
+	// whose project_id is the full project and whose clip_id is full_clip_id),
+	// which is how the live run on 2026-10-21 wrote it.
+	shorts, full, bonus := 0, 0, 0
 	for _, c := range clips.Clips {
-		if c.ClipID == "" || c.ProjectID != clips.ShortsProjectID {
-			t.Fatalf("clip without id or with wrong project: %+v", c)
+		switch {
+		case c.ClipID == "":
+			t.Fatalf("clip without id: %+v", c)
+		case c.ProjectID == clips.ShortsProjectID:
+			shorts++
+			if c.IsBonus {
+				bonus++
+			}
+		case c.ProjectID == clips.FullProjectID && c.ClipID == clips.FullClipID:
+			full++
+		default:
+			t.Fatalf("clip with unexpected project: %+v", c)
 		}
-		if c.IsBonus {
-			bonus++
-		}
+	}
+	if shorts != 3 || full != 1 {
+		t.Fatalf("want the fake's 3 shorts clips and 1 full render in clips.json, got shorts=%d full=%d: %+v", shorts, full, clips.Clips)
 	}
 	if bonus != 1 {
 		t.Fatalf("want exactly one is_bonus clip, got %d", bonus)
