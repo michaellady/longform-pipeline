@@ -26,7 +26,7 @@ type LaunchOptions struct {
 	Now    func() time.Time // default time.Now
 }
 
-// LaunchSession starts `claude -p "/longform-publish <jobdir>"` detached,
+// LaunchSession starts `claude -p "/longform-pipeline:longform-publish <jobdir>"` detached,
 // with stdout at LogRoot()/<id>.session.json and stderr at <id>.session.err,
 // and records pid and start time in job.extra. It returns false without
 // launching when the job already has a session (idempotent).
@@ -86,7 +86,9 @@ func LaunchSession(j *model.Job, opts LaunchOptions) (bool, error) {
 		"Bash(ffmpeg:*)", "Bash(ffprobe:*)", "Bash(jq:*)", "Bash(ls:*)", "Bash(cat:*)",
 		"Read", "Write", "Edit", "Glob", "Grep",
 	}
-	cmd := exec.Command(claude, "-p", "/longform-publish "+j.Dir(),
+	// Plugin skills are invoked with the plugin prefix (a bare /longform-pipeline:longform-publish
+	// returns "Unknown command", as the first launchd run showed).
+	cmd := exec.Command(claude, "-p", "/longform-pipeline:longform-publish "+j.Dir(),
 		"--permission-mode", "acceptEdits",
 		"--allowedTools", strings.Join(allowed, ","),
 		"--output-format", "json")

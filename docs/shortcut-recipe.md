@@ -5,7 +5,7 @@ saves the selected video(s) into the profile's iCloud Drive inbox, and the Mac's
 launchd watcher does the rest. Build it once on the iPhone (about two minutes).
 
 Replace `<profile>` below with the profile name (`evc`, `sandbox-bjj`, ...). The
-folder `iCloud Drive/longform-inbox/<profile>` is created by `/longform-setup`
+folder `iCloud Drive/longform-inbox/<profile>` is created by `/longform-pipeline:longform-setup`
 stage 2; create it from Files if you build the Shortcut first.
 
 ## Steps

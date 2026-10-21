@@ -2,7 +2,7 @@
 
 One JSON file per brand at `~/.config/longform-pipeline/profiles/<name>.json`
 (`LONGFORM_CONFIG_DIR` overrides the root). The Go struct is
-`internal/model/profile.go`; this page is the human-readable twin. `/longform-setup`
+`internal/model/profile.go`; this page is the human-readable twin. `/longform-pipeline:longform-setup`
 writes every field; you can edit the file by hand and re-run `longform status` to
 validate (a bad profile is reported, never silently defaulted).
 

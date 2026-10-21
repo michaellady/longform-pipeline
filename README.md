@@ -13,7 +13,7 @@ iPhone ──Shortcut──▶ iCloud Drive/longform-inbox/<profile>/
                          │  upload: 2 OpusClip projects (shorts + full, skipCurate)
                          │  poll until clipped
                          ▼
-                 claude -p "/longform-publish <job>"      ← picks clips, writes copy,
+                 claude -p "/longform-pipeline:longform-publish <job>"      ← picks clips, writes copy,
                          │                                   statics, adversarial review
                          ▼
                  review/brief.md  → Slack + macOS notification → you: "approve ..."
@@ -61,7 +61,7 @@ make install
 ```
 
 Then record, Share → the Shortcut, and wait for the brief. Approve with
-`/longform-publish approve <slug> "approve"` (or `approve except 3,7`, `hold linkedin`,
+`/longform-pipeline:longform-publish approve <slug> "approve"` (or `approve except 3,7`, `hold linkedin`,
 `drop 4`, `swap thumbnail 2`, `decide d1 <option>`, `reject`).
 
 ## Job states

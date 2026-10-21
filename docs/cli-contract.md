@@ -196,7 +196,7 @@ longform launch-session [--force] [--claude <path>] <jobdir>
 
 Brief, verbatim:
 
-> runs `claude -p "/longform-publish <jobdir>" --permission-mode acceptEdits
+> runs `claude -p "/longform-pipeline:longform-publish <jobdir>" --permission-mode acceptEdits
 > --output-format json` with stdout to model.LogRoot()/<jobid>.session.json
 > and stderr to .session.err, non-blocking (start and return), recording pid
 > and start time in job.extra.

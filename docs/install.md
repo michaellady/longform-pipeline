@@ -24,7 +24,7 @@ In Claude Code:
 /plugin install longform-pipeline
 ```
 
-That gives you `/longform-setup` and `/longform-publish`, the launchd template, and
+That gives you `/longform-pipeline:longform-setup` and `/longform-pipeline:longform-publish`, the launchd template, and
 the wizard script under the plugin cache. The `longform` binary is separate (next
 step) because a plugin cache is not a place for a 10 MB executable.
 
@@ -56,7 +56,7 @@ The wizard finds the binary at `$LONGFORM_BIN`, then
 ## 4. Wizard
 
 ```
-/longform-setup
+/longform-pipeline:longform-setup
 ```
 
 or in a terminal:
@@ -138,7 +138,7 @@ In Claude Code: `/plugin uninstall longform-pipeline`.
 ## Headless editorial sessions need a logged-in `claude`
 
 `longform launch-session` (called by the watcher once a job is `clipped`) runs
-`claude -p "/longform-publish <jobdir>"` as the launchd user. That only works when:
+`claude -p "/longform-pipeline:longform-publish <jobdir>"` as the launchd user. That only works when:
 
 - the `claude` CLI on the watcher's PATH is logged in for the config directory it
   will use (`CLAUDE_CONFIG_DIR` if set in the LaunchAgent's environment, else

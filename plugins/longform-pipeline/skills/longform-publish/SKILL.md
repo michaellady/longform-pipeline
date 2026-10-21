@@ -1,6 +1,6 @@
 ---
 name: longform-publish
-description: "Turn one clipped long-form job into a scheduled fan-out: pick clips, write per-cell copy with CTAs, package the full video, choose statics, pass adversarial review, write review/draft.json and the brief, then (on approval) schedule through the gates. Triggers: /longform-publish <jobdir>, 'draft the brief for <job>', 'publish job <slug>', 'approve <slug> ...', 'longform approve', 'schedule the longform job'. Invoked headlessly by the launchd watcher via claude -p and interactively for approval."
+description: "Turn one clipped long-form job into a scheduled fan-out: pick clips, write per-cell copy with CTAs, package the full video, choose statics, pass adversarial review, write review/draft.json and the brief, then (on approval) schedule through the gates. Triggers: /longform-pipeline:longform-publish <jobdir>, 'draft the brief for <job>', 'publish job <slug>', 'approve <slug> ...', 'longform approve', 'schedule the longform job'. Invoked headlessly by the launchd watcher via claude -p and interactively for approval."
 user_invocable: true
 ---
 
@@ -14,10 +14,10 @@ binary for everything else.
 
 Two entry points:
 
-- `/longform-publish <jobdir>` — draft phase. Runs headless from launchd
-  (`claude -p "/longform-publish $JOB_DIR" --permission-mode acceptEdits`), so never
+- `/longform-pipeline:longform-publish <jobdir>` — draft phase. Runs headless from launchd
+  (`claude -p "/longform-pipeline:longform-publish $JOB_DIR" --permission-mode acceptEdits`), so never
   ask a question; put open questions in `decisions[]` instead. Ends at state `drafted`.
-- `/longform-publish approve <slug> "<grammar>"` — approval phase, interactive.
+- `/longform-pipeline:longform-publish approve <slug> "<grammar>"` — approval phase, interactive.
   Ends at state `scheduled`.
 
 `<jobdir>` is an absolute path or a job id under
@@ -263,7 +263,7 @@ three rounds, put the unresolved finding in `decisions[]` and hold the affected 
 
 ## Approval phase
 
-`/longform-publish approve <slug> "<grammar>"`
+`/longform-pipeline:longform-publish approve <slug> "<grammar>"`
 
 Grammar (one or more, comma-separated clauses are not supported; run twice instead):
 
@@ -341,7 +341,7 @@ held count, anything the gate rewrote.
 - **OpusClip MCP absent**: every call has a `longform opus ...` twin; prefer the binary
   in headless mode regardless.
 - **Buffer tag id missing for a format**: skip that static, add a decision pointing at
-  `/longform-setup` stage 6.
+  `/longform-pipeline:longform-setup` stage 6.
 - **`hold <platform>` with statics**: statics on that platform are dropped too.
 - **Slot collision reported by `slots propose`**: it has already rolled to the next
   free slot; just copy its output.
