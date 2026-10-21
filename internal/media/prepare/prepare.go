@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/michaellady/longform-pipeline/internal/censor"
+	"github.com/michaellady/longform-pipeline/internal/ingest"
 	"github.com/michaellady/longform-pipeline/internal/media"
 	"github.com/michaellady/longform-pipeline/internal/model"
 	"github.com/michaellady/longform-pipeline/internal/transcribe"
@@ -127,7 +128,12 @@ func Run(job *model.Job, prof *model.Profile, opts Options) error {
 
 func (r *runner) run() error {
 	job, prof := r.job, r.prof
-	src := job.Sources[0].Path
+	// The input is the stitched segment for a stitch profile, else the single
+	// staged source; ingest.InputPath is the one place that rule lives.
+	src := ingest.InputPath(job)
+	if src == "" {
+		return fmt.Errorf("prepare: job has no input (no sources, no stitched file)")
+	}
 	if !filepath.IsAbs(src) {
 		src = job.Path(src)
 	}
@@ -136,17 +142,21 @@ func (r *runner) run() error {
 	}
 
 	// 1. Probe the source (reuse the staged probe for the HDR/rotation call).
+	// A stitched job's Sources[0] probe describes only the first segment, so
+	// the stitched file is always probed afresh.
 	var info *media.Info
-	if p := job.Sources[0].Probe; p != nil {
+	if p := job.Sources[0].Probe; p != nil && !job.Stitched {
 		info = &media.Info{DurationMs: p.DurationMs, Width: p.Width, Height: p.Height, FPS: p.FPS, VideoCodec: p.Codec, AudioCodec: p.AudioCodec, ColorTransfer: p.ColorTransfer, Rotation: p.Rotation, HasAudio: p.AudioCodec != ""}
 	} else {
 		var err error
 		if info, err = r.opts.Tools.Probe(src); err != nil {
 			return err
 		}
-		job.Sources[0].Probe = info.Model()
-		if err := job.Save(); err != nil {
-			return err
+		if !job.Stitched {
+			job.Sources[0].Probe = info.Model()
+			if err := job.Save(); err != nil {
+				return err
+			}
 		}
 	}
 	r.state.HDR = info.HDR()
