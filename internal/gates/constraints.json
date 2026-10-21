@@ -1,0 +1,62 @@
+{
+  "youtube": {
+    "post_text_field": "description",
+    "title_source": "separate",
+    "fields": {
+      "title": { "max_runes": 100, "required": true },
+      "description": { "max_runes": 5000 },
+      "hashtags": { "max_count": 60 }
+    }
+  },
+  "facebook": {
+    "post_text_field": "title",
+    "title_source": "post_text",
+    "fields": { "title": { "max_runes": 2200, "required": true } }
+  },
+  "instagram": {
+    "post_text_field": "title",
+    "title_source": "post_text",
+    "fields": {
+      "title": { "max_runes": 2200, "required": true },
+      "hashtags": { "max_count": 30 }
+    }
+  },
+  "tiktok": {
+    "post_text_field": "title",
+    "title_source": "post_text",
+    "fields": { "title": { "max_runes": 2200, "required": true } }
+  },
+  "linkedin_profile": {
+    "post_text_field": "title",
+    "title_source": "post_text",
+    "fields": { "title": { "max_runes": 3000, "required": true } }
+  },
+  "linkedin_page": {
+    "post_text_field": "title",
+    "title_source": "post_text",
+    "fields": { "title": { "max_runes": 3000, "required": true } }
+  },
+  "threads": {
+    "post_text_field": "title",
+    "title_source": "post_text",
+    "fields": { "title": { "max_runes": 500, "required": true } }
+  },
+  "x": {
+    "post_text_field": "title",
+    "title_source": "post_text",
+    "fields": { "title": { "max_runes": 280, "required": true } }
+  },
+  "bluesky": {
+    "post_text_field": "title",
+    "title_source": "post_text",
+    "fields": { "title": { "max_runes": 300, "required": true } }
+  },
+  "pinterest": {
+    "post_text_field": "description",
+    "title_source": "separate",
+    "fields": {
+      "title": { "max_runes": 100, "required": true },
+      "description": { "max_runes": 300 }
+    }
+  }
+}

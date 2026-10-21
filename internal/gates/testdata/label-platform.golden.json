@@ -1,0 +1,12 @@
+[
+  { "label": "YOUTUBE Enterprise Vibe Code", "platform": "youtube" },
+  { "label": "FACEBOOK_PAGE Enterprise Vibe Code", "platform": "facebook" },
+  { "label": "INSTAGRAM_BUSINESS Enterprise Vibe Code", "platform": "instagram" },
+  { "label": "LINKEDIN_PROFILE Mike Lady", "platform": "linkedin_profile" },
+  { "label": "LINKEDIN Enterprise Vibe Code", "platform": "linkedin_page" },
+  { "label": "TIKTOK_BUSINESS mikelady", "platform": "tiktok" },
+  { "label": "THREADS mikelady", "platform": "threads" },
+  { "label": "X mikelady", "platform": "x" },
+  { "label": "BLUESKY mikelady", "platform": "bluesky" },
+  { "label": "PINTEREST mikelady", "platform": "pinterest" }
+]
