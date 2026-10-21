@@ -1,0 +1,120 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/michaellady/longform-pipeline/internal/cli.Version=${{ github.ref_name }}" \
+            -o dist/longform ./cmd/longform
+          dist/longform version
+
+      - name: Package
+        run: |
+          cd dist
+          name="longform_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          tar -czf "$name.tar.gz" longform
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          rm longform
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+
+  release:
+    name: publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Combined checksums
+        run: |
+          cd dist
+          cat *.sha256 > checksums.txt
+          ls -la
+
+      # AGENTS.md rule 12: a plain-English title and a "## Summary" first, written
+      # for a non-technical reader. Edit the release body after publishing if the
+      # tag's annotation did not carry a summary.
+      - name: Release notes
+        id: notes
+        run: |
+          tag="${{ github.ref_name }}"
+          summary="$(git tag -l --format='%(contents:body)' "$tag" | sed '/^-----BEGIN PGP SIGNATURE-----/,$d')"
+          if [ -z "$(printf '%s' "$summary" | tr -d '[:space:]')" ]; then
+            summary="This release updates the longform-pipeline tool that turns one long-form phone recording into scheduled clips, a full-length upload, and static posts after a single approval. Install or update it with \`make install\` or the tarball below; nothing changes in your brand profiles or scheduled posts unless the notes under Details say so."
+          fi
+          {
+            echo "## Summary"
+            echo
+            echo "$summary"
+            echo
+            echo "<details><summary>Technical details</summary>"
+            echo
+            echo "### Install"
+            echo
+            echo '```bash'
+            echo "curl -sSL https://github.com/${{ github.repository }}/releases/download/$tag/longform_${tag}_darwin_\$(uname -m | sed s/x86_64/amd64/).tar.gz | tar -xz"
+            echo "./longform version"
+            echo '```'
+            echo
+            echo "### Changes since the previous tag"
+            echo
+            prev="$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)"
+            if [ -n "$prev" ]; then git log --no-merges --pretty='- %s' "$prev..$tag"; else git log --no-merges --pretty='- %s' "$tag"; fi
+            echo
+            echo "### Checksums (sha256)"
+            echo
+            echo '```'
+            cat dist/checksums.txt
+            echo '```'
+            echo
+            echo "</details>"
+          } > notes.md
+          cat notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_name }}"
+          gh release create "$tag" \
+            --title "longform-pipeline $tag: long-form video to scheduled posts" \
+            --notes-file notes.md \
+            --verify-tag \
+            dist/*.tar.gz dist/*.sha256 dist/checksums.txt

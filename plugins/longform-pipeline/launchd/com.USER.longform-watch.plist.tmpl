@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  longform-pipeline LaunchAgent template.
+  Rendered by scripts/setup.sh (stage 10) or `make launchd-install` into
+  ~/Library/LaunchAgents/com.@@USER@@.longform-watch.plist.
+
+  Placeholders:
+    @@USER@@        the macOS short user name (label suffix)
+    @@BIN@@         absolute path to the longform binary
+    @@LOG@@         absolute log directory (~/Library/Logs/longform-pipeline)
+    @@ENV_FILE@@    absolute path to ~/.config/longform-pipeline/env
+    @@WATCHPATHS@@  replaced by one <string>inbox</string> line per profile
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.@@USER@@.longform-watch</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>@@BIN@@</string>
+    <string>watch</string>
+    <string>--once</string>
+  </array>
+
+  <!-- Fire when any profile inbox changes ... -->
+  <key>WatchPaths</key>
+  <array>
+@@WATCHPATHS@@
+  </array>
+
+  <!-- ... and every 10 minutes regardless, so iCloud placeholders and
+       in-flight OpusClip polls are picked up without a file event. -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>LONGFORM_ENV_FILE</key>
+    <string>@@ENV_FILE@@</string>
+    <key>HOME</key>
+    <string>/Users/@@USER@@</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>@@LOG@@/watch.log</string>
+  <key>StandardErrorPath</key>
+  <string>@@LOG@@/watch.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>Nice</key>
+  <integer>5</integer>
+</dict>
+</plist>
