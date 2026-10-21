@@ -570,14 +570,22 @@ func TestPipeline(t *testing.T) {
 	// --- manifest ----------------------------------------------------------
 	h.mustOK("manifest", "init", "--job", jobDir)
 	h.mustOK("manifest", "append-post", "--job", jobDir, "--file", resultsPath)
-	var manifest struct {
-		ScheduledPosts []map[string]any `json:"scheduled_posts"`
+	// The manifest keeps the vendored shape: scheduled_posts nest under each
+	// clip so content-attribution and pm-tool keep reading it.
+	var manifestDoc struct {
+		Clips []struct {
+			ScheduledPosts []map[string]any `json:"scheduled_posts"`
+		} `json:"clips"`
 	}
 	manifestPath := filepath.Join(jobDir, "manifest.json")
-	readJSON(t, manifestPath, &manifest)
+	readJSON(t, manifestPath, &manifestDoc)
+	var manifest struct{ ScheduledPosts []map[string]any }
+	for _, c := range manifestDoc.Clips {
+		manifest.ScheduledPosts = append(manifest.ScheduledPosts, c.ScheduledPosts...)
+	}
 	if len(manifest.ScheduledPosts) != len(cells) {
 		b, _ := os.ReadFile(manifestPath)
-		t.Fatalf("manifest.json: want %d scheduled_posts, got %d:\n%s", len(cells), len(manifest.ScheduledPosts), b)
+		t.Fatalf("manifest.json: want %d scheduled_posts across clips, got %d:\n%s", len(cells), len(manifest.ScheduledPosts), b)
 	}
 	for i, p := range manifest.ScheduledPosts {
 		id, _ := p["schedule_id"].(string)
