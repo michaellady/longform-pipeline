@@ -9,7 +9,8 @@ import (
 func TestLoadEnvFileSetsMissingOnly(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "env")
-	content := "# comment\n\nOPUSCLIP_API_KEY='abc'\"'\"'def'\nexport SLACK_WEBHOOK_URL=\"https://hooks.example/x\"\nALREADY=fromfile\nbad line\n9BAD=x\n"
+	// The wizard escapes a literal quote inside a single-quoted value as '\''.
+	content := "# comment\n\nOPUSCLIP_API_KEY='abc'\\''def'\nexport SLACK_WEBHOOK_URL=\"https://hooks.example/x\"\nALREADY=fromfile\nbad line\n9BAD=x\n"
 	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
