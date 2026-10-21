@@ -167,3 +167,14 @@ binary rather than a working tree:
 ```bash
 bash ~/.claude/plugins/cache/longform-pipeline/longform-pipeline/<version>/scripts/setup.sh
 ```
+
+### Symptoms in `<LogRoot>/<job>.session.json`
+
+| `result` text | Meaning | Fix |
+|---|---|---|
+| `Unknown command: /longform-publish` | the plugin is not installed in the config directory this `claude` uses, or an old binary invoked the bare name | install the plugin there; skills are `/longform-pipeline:<skill>` |
+| `Failed to authenticate: OAuth session expired and could not be refreshed` | the CLI's sign-in lapsed | run `claude` in a terminal, `/login`, then relaunch |
+| `Not logged in · Please run /login` | never signed in for that config directory | same |
+
+Relaunch a job whose session failed with `longform launch-session --force <jobdir>`;
+the watcher launches each job only once on its own.
