@@ -5,6 +5,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/michaellady/longform-pipeline/internal/model"
 	"os"
 	"sort"
 )
@@ -30,8 +31,13 @@ func Register(c Command) {
 	registry[c.Name] = c
 }
 
-// Run dispatches args[0] to its command.
+// Run dispatches args[0] to its command. Secrets the wizard stored in the env
+// file (LONGFORM_ENV_FILE or <ConfigRoot>/env) are loaded first, because
+// launchd passes only the file's path, never its contents.
 func Run(args []string) int {
+	if _, err := model.LoadEnvFile(); err != nil {
+		fmt.Fprintln(os.Stderr, "longform: env file:", err)
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		usage()
 		return 0
