@@ -1,0 +1,410 @@
+// Package prepare takes a job from `staged` to `prepared`: remux or tonemap,
+// optional vidstab, whisper transcript, censor spans, delivery.mp4 (plan
+// section 4.3). Every sub-step is skipped on re-run when its output exists
+// and its input is unchanged (size + mtime + a step signature, recorded in
+// job.extra.prepare), so a crash or a profile tweak resumes from the step
+// that changed.
+package prepare
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/michaellady/longform-pipeline/internal/censor"
+	"github.com/michaellady/longform-pipeline/internal/media"
+	"github.com/michaellady/longform-pipeline/internal/model"
+	"github.com/michaellady/longform-pipeline/internal/transcribe"
+)
+
+// Job-relative paths the stage writes.
+const (
+	RemuxOut        = "analysis/remux.mp4"
+	StabilizedOut   = "analysis/stabilized.mp4"
+	TransformsOut   = "analysis/transforms.trf"
+	StabilizeBefore = "review/stabilize-before.jpg"
+	StabilizeAfter  = "review/stabilize-after.jpg"
+	WavOut          = "analysis/audio16k.wav"
+	WhisperBase     = "analysis/whisper" // whisper-cli appends .json
+	WhisperOut      = "analysis/whisper.json"
+	TranscriptOut   = "analysis/transcript.json"
+	CensoredOut     = "analysis/censored.json"
+	DeliveryOut     = "delivery.mp4"
+	LogOut          = "logs/prepare.log"
+)
+
+// Options wires the external tools. Zero values are resolved from PATH.
+type Options struct {
+	Tools      media.Tools
+	WhisperCLI string
+	CensorList string    // path; empty = censor.FindDefaultList()
+	Log        io.Writer // step progress lines (stdout in the CLI)
+}
+
+// State is persisted under job.Extra["prepare"].
+type State struct {
+	Steps             map[string]Stamp `json:"steps"`
+	HDR               bool             `json:"hdr"`
+	TonemapFilter     string           `json:"tonemap_filter,omitempty"` // "zscale" | "tonemap-only"
+	Stabilized        bool             `json:"stabilized"`
+	TranscribeSkipped bool             `json:"transcribe_skipped,omitempty"`
+	WhisperModel      string           `json:"whisper_model,omitempty"`
+	CensorList        string           `json:"censor_list,omitempty"`
+	CensorSpans       int              `json:"censor_spans"`
+}
+
+// Stamp records what a step consumed and produced.
+type Stamp struct {
+	Input  string `json:"input"`
+	Size   int64  `json:"size"`
+	Mtime  int64  `json:"mtime_unix"`
+	Sig    string `json:"sig,omitempty"`
+	Output string `json:"output"`
+	At     string `json:"at"`
+}
+
+// ErrState is returned when the job is not in `staged`.
+var ErrState = errors.New("job is not staged")
+
+type runner struct {
+	job   *model.Job
+	prof  *model.Profile
+	opts  Options
+	state *State
+	log   io.Writer
+}
+
+// Run executes the stage. It is idempotent: a job already at or past
+// `prepared` returns nil immediately.
+func Run(job *model.Job, prof *model.Profile, opts Options) error {
+	if job.AtLeast(model.StatePrepared) {
+		return nil
+	}
+	if job.State != model.StateStaged {
+		return fmt.Errorf("%w: state is %s", ErrState, job.State)
+	}
+	if len(job.Sources) == 0 {
+		return errors.New("prepare: job has no sources")
+	}
+	if opts.Tools.FFmpeg == "" || opts.Tools.FFprobe == "" {
+		t, err := media.FindTools()
+		if err != nil {
+			return err
+		}
+		t.Log = opts.Tools.Log
+		opts.Tools = t
+	}
+	if opts.Log == nil {
+		opts.Log = io.Discard
+	}
+	if err := os.MkdirAll(job.Path("logs"), 0o755); err != nil {
+		return err
+	}
+	lf, err := os.OpenFile(job.Path(LogOut), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer lf.Close()
+	fmt.Fprintf(lf, "==== prepare %s %s\n", job.ID, time.Now().UTC().Format(time.RFC3339))
+	if opts.Tools.Log == nil {
+		opts.Tools.Log = lf
+	} else {
+		opts.Tools.Log = io.MultiWriter(opts.Tools.Log, lf)
+	}
+	r := &runner{job: job, prof: prof, opts: opts, state: loadState(job), log: lf}
+	if err := r.run(); err != nil {
+		fmt.Fprintf(lf, "ERROR: %v\n", err)
+		job.Error = err.Error()
+		_ = r.saveState()
+		return err
+	}
+	return nil
+}
+
+func (r *runner) run() error {
+	job, prof := r.job, r.prof
+	src := job.Sources[0].Path
+	if !filepath.IsAbs(src) {
+		src = job.Path(src)
+	}
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("prepare: source: %w", err)
+	}
+
+	// 1. Probe the source (reuse the staged probe for the HDR/rotation call).
+	var info *media.Info
+	if p := job.Sources[0].Probe; p != nil {
+		info = &media.Info{DurationMs: p.DurationMs, Width: p.Width, Height: p.Height, FPS: p.FPS, VideoCodec: p.Codec, AudioCodec: p.AudioCodec, ColorTransfer: p.ColorTransfer, Rotation: p.Rotation, HasAudio: p.AudioCodec != ""}
+	} else {
+		var err error
+		if info, err = r.opts.Tools.Probe(src); err != nil {
+			return err
+		}
+		job.Sources[0].Probe = info.Model()
+		if err := job.Save(); err != nil {
+			return err
+		}
+	}
+	r.state.HDR = info.HDR()
+
+	// 2. Remux, or tonemap when HDR.
+	remuxSig := "copy"
+	if info.HDR() {
+		if r.state.TonemapFilter == "" {
+			has, err := r.opts.Tools.HasFilter("zscale")
+			if err != nil {
+				return err
+			}
+			r.state.TonemapFilter = "tonemap-only"
+			if has {
+				r.state.TonemapFilter = "zscale"
+			}
+		}
+		remuxSig = "tonemap:" + r.state.TonemapFilter
+	}
+	err := r.step("remux", src, RemuxOut, remuxSig, func() error {
+		if info.HDR() {
+			// A reused staged probe lacks primaries/matrix; probe now for them.
+			full, perr := r.opts.Tools.Probe(src)
+			if perr != nil {
+				return perr
+			}
+			vf := media.TonemapFilter(r.state.TonemapFilter == "zscale", full.ColorTransfer, full.ColorPrimaries, full.ColorSpace)
+			return r.opts.Tools.Tonemap(job.Dir(), src, RemuxOut, vf)
+		}
+		return r.opts.Tools.Remux(job.Dir(), src, RemuxOut)
+	})
+	if err != nil {
+		return err
+	}
+	current := RemuxOut
+
+	// 3. Stabilise.
+	r.state.Stabilized = false
+	if prof.Stabilize.Enabled {
+		s := prof.Stabilize
+		sig := fmt.Sprintf("vidstab:%d:%d:%d", s.Shakiness, s.Smoothing, s.Zoom)
+		err := r.step("stabilize", job.Path(RemuxOut), StabilizedOut, sig, func() error {
+			if err := r.opts.Tools.StabilizeDetect(job.Dir(), RemuxOut, media.StabilizeDetectFilter(s.Shakiness, TransformsOut)); err != nil {
+				return err
+			}
+			if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, media.StabilizeTransformFilter(s.Smoothing, s.Zoom, TransformsOut)); err != nil {
+				return err
+			}
+			at := info.DurationMs / 4
+			if err := r.opts.Tools.ExtractFrame(job.Dir(), RemuxOut, at, StabilizeBefore); err != nil {
+				return err
+			}
+			return r.opts.Tools.ExtractFrame(job.Dir(), StabilizedOut, at, StabilizeAfter)
+		})
+		if err != nil {
+			return err
+		}
+		current = StabilizedOut
+		r.state.Stabilized = true
+		job.Artifacts.StabilizeBefore = StabilizeBefore
+		job.Artifacts.StabilizeAfter = StabilizeAfter
+	}
+
+	// Probe the intermediate: the censor graph must match its audio format.
+	cur, err := r.opts.Tools.Probe(job.Path(current))
+	if err != nil {
+		return err
+	}
+
+	// 4. Transcribe.
+	lang := prof.Transcribe.Language
+	if lang == "" {
+		lang = "en"
+	}
+	if os.Getenv("LONGFORM_SKIP_TRANSCRIBE") == "1" {
+		r.state.TranscribeSkipped = true
+		err = r.step("transcript", job.Path(current), TranscriptOut, "skipped", func() error {
+			return transcribe.Write(job.Path(TranscriptOut), transcribe.Empty(lang, cur.DurationMs))
+		})
+		if err != nil {
+			return err
+		}
+	} else if !cur.HasAudio {
+		err = r.step("transcript", job.Path(current), TranscriptOut, "no-audio", func() error {
+			return transcribe.Write(job.Path(TranscriptOut), transcribe.Empty(lang, cur.DurationMs))
+		})
+		if err != nil {
+			return err
+		}
+	} else {
+		r.state.TranscribeSkipped = false
+		modelPath := transcribe.ModelPath(prof.Transcribe.Model)
+		r.state.WhisperModel = modelPath
+		if err := r.step("wav", job.Path(current), WavOut, "16k-mono", func() error {
+			return r.opts.Tools.ExtractWav16k(job.Dir(), current, WavOut)
+		}); err != nil {
+			return err
+		}
+		wsig := fmt.Sprintf("whisper:%s:%s:%d", modelPath, lang, prof.Transcribe.Threads)
+		if err := r.step("whisper", job.Path(WavOut), WhisperOut, wsig, func() error {
+			cli := r.opts.WhisperCLI
+			if cli == "" {
+				var ferr error
+				if cli, ferr = transcribe.FindCLI(); ferr != nil {
+					return ferr
+				}
+			}
+			return transcribe.Run(transcribe.Options{CLI: cli, Model: modelPath, Language: lang, Threads: prof.Transcribe.Threads, Log: r.log}, job.Dir(), WavOut, WhisperBase)
+		}); err != nil {
+			return err
+		}
+		if err := r.step("transcript", job.Path(WhisperOut), TranscriptOut, "v1", func() error {
+			raw, rerr := os.ReadFile(job.Path(WhisperOut))
+			if rerr != nil {
+				return rerr
+			}
+			t, nerr := transcribe.Normalize(raw, modelPath, lang, cur.DurationMs)
+			if nerr != nil {
+				return nerr
+			}
+			return transcribe.Write(job.Path(TranscriptOut), t)
+		}); err != nil {
+			return err
+		}
+	}
+	job.Artifacts.Transcript = TranscriptOut
+
+	// 5. Censor spans (always written, possibly empty).
+	tr, err := transcribe.Load(job.Path(TranscriptOut))
+	if err != nil {
+		return err
+	}
+	mode := prof.Censor.Mode
+	if mode == "" {
+		mode = censor.ModeBeep
+	}
+	cen := &censor.Censored{SchemaVersion: "1", Mode: mode, Spans: []censor.Span{}}
+	if prof.Censor.Enabled && len(tr.Words) > 0 {
+		listPath := r.opts.CensorList
+		if listPath == "" {
+			if listPath, err = censor.FindDefaultList(); err != nil {
+				return err
+			}
+		}
+		list, err := censor.LoadList(listPath)
+		if err != nil {
+			return err
+		}
+		r.state.CensorList = listPath
+		vocab := censor.Vocabulary(list.Words, prof.Censor.Extra)
+		cen.Spans = censor.Merge(censor.Match(tr.Words, vocab, censor.DefaultPadMs, cur.DurationMs))
+	}
+	if err := censor.Write(job.Path(CensoredOut), cen); err != nil {
+		return err
+	}
+	r.state.CensorSpans = len(cen.Spans)
+	job.Artifacts.Censored = CensoredOut
+
+	// 6. delivery.mp4.
+	graph := ""
+	if cur.HasAudio {
+		graph = censor.FilterGraph(cen.Spans, mode, cur.Audio())
+	}
+	dsig := "copy"
+	if graph != "" {
+		dsig = "censor:" + censor.Signature(cen)
+	}
+	err = r.step("delivery", job.Path(current), DeliveryOut, dsig, func() error {
+		if graph == "" {
+			return r.opts.Tools.Remux(job.Dir(), current, DeliveryOut)
+		}
+		return r.opts.Tools.RenderAudioGraph(job.Dir(), current, DeliveryOut, graph)
+	})
+	if err != nil {
+		return err
+	}
+	del, err := r.opts.Tools.Probe(job.Path(DeliveryOut))
+	if err != nil {
+		return err
+	}
+	job.Delivery = del.Model()
+	job.Artifacts.Delivery = DeliveryOut
+	if err := r.saveState(); err != nil {
+		return err
+	}
+	note := fmt.Sprintf("hdr=%v stabilized=%v words=%d censored_spans=%d mode=%s", r.state.HDR, r.state.Stabilized, len(tr.Words), len(cen.Spans), mode)
+	fmt.Fprintln(r.opts.Log, "prepared:", note)
+	return job.Advance(model.StatePrepared, "prepare", note)
+}
+
+// step runs fn unless output exists and the recorded stamp for name matches
+// the current input (size+mtime) and sig. Progress is persisted after each
+// step so a crash resumes.
+func (r *runner) step(name, input, output, sig string, fn func() error) error {
+	st, err := os.Stat(input)
+	if err != nil {
+		return fmt.Errorf("%s: input %s: %w", name, input, err)
+	}
+	outAbs := output
+	if !filepath.IsAbs(outAbs) {
+		outAbs = r.job.Path(output)
+	}
+	want := Stamp{Input: input, Size: st.Size(), Mtime: st.ModTime().Unix(), Sig: sig, Output: output}
+	if have, ok := r.state.Steps[name]; ok {
+		if _, oerr := os.Stat(outAbs); oerr == nil && have.Input == want.Input && have.Size == want.Size && have.Mtime == want.Mtime && have.Sig == want.Sig {
+			fmt.Fprintf(r.opts.Log, "%-11s skip (unchanged) -> %s\n", name, output)
+			return nil
+		}
+	}
+	fmt.Fprintf(r.opts.Log, "%-11s run  -> %s\n", name, output)
+	if err := os.MkdirAll(filepath.Dir(outAbs), 0o755); err != nil {
+		return err
+	}
+	started := time.Now()
+	if err := fn(); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if _, err := os.Stat(outAbs); err != nil {
+		return fmt.Errorf("%s: produced no output at %s", name, output)
+	}
+	want.At = time.Now().UTC().Format(time.RFC3339)
+	r.state.Steps[name] = want
+	fmt.Fprintf(r.opts.Log, "%-11s done in %s\n", name, time.Since(started).Round(time.Millisecond))
+	return r.saveState()
+}
+
+func loadState(job *model.Job) *State {
+	s := &State{Steps: map[string]Stamp{}}
+	if job.Extra == nil {
+		return s
+	}
+	raw, ok := job.Extra["prepare"]
+	if !ok {
+		return s
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return s
+	}
+	var loaded State
+	if err := json.Unmarshal(b, &loaded); err != nil || loaded.Steps == nil {
+		return s
+	}
+	return &loaded
+}
+
+func (r *runner) saveState() error {
+	b, err := json.Marshal(r.state)
+	if err != nil {
+		return err
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(b, &generic); err != nil {
+		return err
+	}
+	if r.job.Extra == nil {
+		r.job.Extra = map[string]any{}
+	}
+	r.job.Extra["prepare"] = generic
+	return r.job.Save()
+}
