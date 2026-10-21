@@ -284,7 +284,7 @@ render_plist() {
       -e "s|@@LOG@@|$LOG_DIR|g" \
       -e "s|@@ENV_FILE@@|$ENV_FILE|g" \
       "$PLIST_TMPL" \
-  | awk -v f="$tmp" '/@@WATCHPATHS@@/ { while ((getline l < f) > 0) print l; next } { print }' \
+  | awk -v f="$tmp" '$0 ~ /^[[:space:]]*@@WATCHPATHS@@[[:space:]]*$/ { while ((getline l < f) > 0) print l; close(f); next } { print }' \
   > "$AGENT_PLIST"
   rm -f "$tmp"
   printf '  %s✓ wrote%s %s\n' "$GREEN" "$RESET" "$AGENT_PLIST"
@@ -414,6 +414,11 @@ fi
 for k in youtube instagram facebook linkedin_page linkedin_profile tiktok; do
   ask_default "ACCT_$k" "postAccountId for $k (blank = not connected):" "$(pdefault ".opusclip.accounts.$k" "")"
 done
+say "Facebook and LinkedIn share one postAccountId across pages and profiles, so those"
+say "cells also need the subAccountId shown above (Instagram has one too)."
+for k in instagram facebook linkedin_page linkedin_profile; do
+  ask_default "SUB_$k" "subAccountId for $k (blank = none):" "$(pdefault ".opusclip.sub_accounts.$k" "")"
+done
 note "Template ids: the account's only template when probed was 665fefb18ce49592eaeff8a0 ('Preset template 1': portrait, captions on, no overlay)."
 ask_default TEMPLATE_ID "OpusClip brand template id:" "$(pdefault .opusclip.template_id 665fefb18ce49592eaeff8a0)"
 ask_default STRIP_OVERLAY "Strip the account-default overlay after render (true/false):" "$(pdefault .opusclip.strip_overlay true)"
@@ -469,7 +474,11 @@ ask_default BACKLOG_DAYS "Backlog days before held clips expire:" "$(pdefault .b
 say "Cadence: posts per day per platform (0 disables a platform)."
 for k in youtube instagram linkedin tiktok facebook; do
   case $k in youtube|tiktok) d=2;; *) d=1;; esac
-  ask_default "CAD_$k" "  $k:" "$(pdefault ".cadence.$k" "$d")"
+  while :; do
+    ask_default "CAD_$k" "  $k:" "$(pdefault ".cadence.$k" "$d")"
+    v="CAD_$k"; [[ "${!v}" =~ ^[0-9]+$ ]] && break
+    warn "whole number of posts per day, please"
+  done
 done
 ask_default STAB "Stabilize with vidstab (true/false):" "$(pdefault .stabilize.enabled true)"
 [[ "$STAB" == false ]] || STAB=true
@@ -500,6 +509,7 @@ jq -n \
   --arg smodel "$SHORTS_MODEL" --arg sprompt "$SHORTS_PROMPT" --argjson filler "$REMOVE_FILLER" \
   --arg a_youtube "$ACCT_youtube" --arg a_instagram "$ACCT_instagram" --arg a_facebook "$ACCT_facebook" \
   --arg a_linkedin_page "$ACCT_linkedin_page" --arg a_linkedin_profile "$ACCT_linkedin_profile" --arg a_tiktok "$ACCT_tiktok" \
+  --arg s_instagram "${SUB_instagram:-}" --arg s_facebook "${SUB_facebook:-}" --arg s_linkedin_page "${SUB_linkedin_page:-}" --arg s_linkedin_profile "${SUB_linkedin_profile:-}" \
   --argjson c_youtube "${CAD_youtube:-0}" --argjson c_instagram "${CAD_instagram:-0}" --argjson c_linkedin "${CAD_linkedin:-0}" \
   --argjson c_tiktok "${CAD_tiktok:-0}" --argjson c_facebook "${CAD_facebook:-0}" \
   --arg slots "$SLOTS" --arg tz "$TIMEZONE" --argjson backlog "${BACKLOG_DAYS:-25}" \
@@ -522,7 +532,8 @@ jq -n \
       strip_overlay: $strip,
       shorts: ({ model: $smodel, durations: [30, 60, 90], aspect: "portrait", remove_filler: $filler } + (if $sprompt == "" then {} else { prompt: $sprompt } end)),
       full: { skip_curate: true, aspect: $orientation },
-      accounts: ({ youtube: $a_youtube, instagram: $a_instagram, facebook: $a_facebook, linkedin_page: $a_linkedin_page, linkedin_profile: $a_linkedin_profile, tiktok: $a_tiktok } | with_entries(select(.value != "")))
+      accounts: ({ youtube: $a_youtube, instagram: $a_instagram, facebook: $a_facebook, linkedin_page: $a_linkedin_page, linkedin_profile: $a_linkedin_profile, tiktok: $a_tiktok } | with_entries(select(.value != ""))),
+      sub_accounts: ({ instagram: $s_instagram, facebook: $s_facebook, linkedin_page: $s_linkedin_page, linkedin_profile: $s_linkedin_profile } | with_entries(select(.value != "")))
     },
     cadence: { youtube: $c_youtube, instagram: $c_instagram, linkedin: $c_linkedin, tiktok: $c_tiktok, facebook: $c_facebook },
     slots_local: ($slots | split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0))),

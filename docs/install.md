@@ -134,3 +134,36 @@ rm -rf ~/Library/Logs/longform-pipeline
 ```
 
 In Claude Code: `/plugin uninstall longform-pipeline`.
+
+## Headless editorial sessions need a logged-in `claude`
+
+`longform launch-session` (called by the watcher once a job is `clipped`) runs
+`claude -p "/longform-publish <jobdir>"` as the launchd user. That only works when:
+
+- the `claude` CLI on the watcher's PATH is logged in for the config directory it
+  will use (`CLAUDE_CONFIG_DIR` if set in the LaunchAgent's environment, else
+  `~/.claude`); run `claude` once interactively from a normal terminal and sign in,
+- the plugin is installed in that same config directory (`claude plugin install
+  longform-pipeline@longform-pipeline` from that terminal), so the skill exists there.
+
+A session started from a sandboxed shell or a different config directory reports
+`Not logged in · Please run /login` in `<LogRoot>/<job>.session.err` and the job
+stays `clipped`; nothing is lost, re-run `longform launch-session <jobdir>` after
+signing in.
+
+## Installing from a local checkout
+
+```bash
+make build
+claude plugin marketplace add /path/to/longform-pipeline
+claude plugin install longform-pipeline@longform-pipeline
+```
+
+The install copies the plugin directory, binary included, into the plugin cache;
+after rebuilding, uninstall and install again to refresh the copy. The setup
+wizard can be run from the installed copy so the LaunchAgent points at the cached
+binary rather than a working tree:
+
+```bash
+bash ~/.claude/plugins/cache/longform-pipeline/longform-pipeline/<version>/scripts/setup.sh
+```

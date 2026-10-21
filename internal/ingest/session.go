@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -71,10 +72,28 @@ func LaunchSession(j *model.Job, opts LaunchOptions) (bool, error) {
 		return false, err
 	}
 	defer errf.Close()
-	cmd := exec.Command(claude, "-p", "/longform-publish "+j.Dir(), "--permission-mode", "acceptEdits", "--output-format", "json")
+	// A headless session cannot answer permission prompts, so the tools the
+	// skill needs are allow-listed up front: the longform binary (by name and
+	// by absolute path), the read/write tools for the job folder, and nothing
+	// that publishes. Scheduling only ever happens in the approval phase.
+	self, err := SelfExecutable()
+	if err != nil || self == "" {
+		self = "longform"
+	}
+	allowed := []string{
+		"Bash(longform:*)",
+		"Bash(" + self + ":*)",
+		"Bash(ffmpeg:*)", "Bash(ffprobe:*)", "Bash(jq:*)", "Bash(ls:*)", "Bash(cat:*)",
+		"Read", "Write", "Edit", "Glob", "Grep",
+	}
+	cmd := exec.Command(claude, "-p", "/longform-publish "+j.Dir(),
+		"--permission-mode", "acceptEdits",
+		"--allowedTools", strings.Join(allowed, ","),
+		"--output-format", "json")
 	cmd.Dir = j.Dir()
 	cmd.Stdout, cmd.Stderr = out, errf
-	cmd.Env = os.Environ()
+	// The skill calls `longform …` by name: put this binary's directory first.
+	cmd.Env = append([]string{"PATH=" + filepath.Dir(self) + ":" + os.Getenv("PATH")}, withoutPath(os.Environ())...)
 	// Own session: launchd must not reap it with the watcher's process group.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -97,4 +116,16 @@ func LaunchSession(j *model.Job, opts LaunchOptions) (bool, error) {
 func fileExists(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && !st.IsDir()
+}
+
+// withoutPath drops PATH entries so a fresh PATH can be prepended.
+func withoutPath(env []string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
