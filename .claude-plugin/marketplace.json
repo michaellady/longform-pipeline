@@ -1,0 +1,12 @@
+{
+  "name": "longform-pipeline",
+  "owner": { "name": "Mike Lady", "url": "https://github.com/michaellady" },
+  "metadata": { "description": "Long-form video to social fan-out pipeline for Claude Code." },
+  "plugins": [
+    {
+      "name": "longform-pipeline",
+      "source": "./plugins/longform-pipeline",
+      "description": "Record a long-form video on your phone, let OpusClip clip it, and fan out the full video, shorts, and static posts after one approval."
+    }
+  ]
+}

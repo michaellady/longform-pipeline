@@ -1,0 +1,10 @@
+{
+  "name": "longform-pipeline",
+  "version": "0.1.0",
+  "description": "Record a long-form video on your phone, let OpusClip clip it, and fan out the full video, shorts, and static posts to every social surface after one approval. Deterministic Go transport, editorial judgment in a skill, brand profiles outside the plugin.",
+  "author": { "name": "Mike Lady", "url": "https://github.com/michaellady" },
+  "homepage": "https://github.com/michaellady/longform-pipeline",
+  "repository": "https://github.com/michaellady/longform-pipeline",
+  "license": "MIT",
+  "keywords": ["video", "opusclip", "social-media", "buffer", "youtube", "pipeline", "launchd"]
+}

@@ -1,0 +1,5 @@
+plugins/longform-pipeline/scripts/longform
+dist/
+*.local.json
+.DS_Store
+*.tmp-*
