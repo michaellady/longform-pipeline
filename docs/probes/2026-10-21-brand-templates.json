@@ -1,0 +1,159 @@
+[
+  {
+    "preferences": {
+      "enableSplitLayout": true,
+      "enableFitLayout": false,
+      "enableFillLayout": false,
+      "enableScreenLayout": true,
+      "enableThreeLayout": true,
+      "enableFourLayout": true,
+      "enableGameLayout": true,
+      "enableAutoLayout": false,
+      "disableFitLayout": false,
+      "disableFillLayout": false,
+      "fitLayoutCropRatio": "4:3",
+      "enableCrop": true,
+      "layoutAspectRatio": "portrait",
+      "enableVisualHook": false,
+      "enableCaption": true,
+      "captionStyle": "",
+      "captionPosition": "auto",
+      "captionCustomStyle": null,
+      "enableCaptionAnimation": true,
+      "captionAnimation": {
+        "name": "blur-switch",
+        "highlightColor": "#5DFBFF",
+        "bgColor": "",
+        "bgEnabled": null,
+        "bgPaddingX": null,
+        "bgPaddingLeft": null,
+        "bgPaddingRight": null,
+        "bgPaddingTop": null,
+        "bgPaddingBottom": null,
+        "borderRadius": null,
+        "lineSpace": null,
+        "maxWidth": null
+      },
+      "enableUppercase": true,
+      "font": {
+        "id": null,
+        "type": null,
+        "name": null,
+        "path": null,
+        "size": "Large",
+        "numericalSize": 48,
+        "color": "#FFFFFF",
+        "style": [
+          "600"
+        ],
+        "textDecoration": "",
+        "family": "Roboto",
+        "stroke": {
+          "enabled": false,
+          "color": "#357847",
+          "width": 30
+        },
+        "shadow": {
+          "enabled": false,
+          "color": "#F01313",
+          "x": 4,
+          "y": 4,
+          "blur": 0,
+          "useWordHighlightColor": false
+        }
+      },
+      "enableHighlight": false,
+      "highlightColor": {
+        "primary": "#04f827",
+        "secondary": "#FFFD03"
+      },
+      "enableEmoji": true,
+      "emojiStyle": {
+        "pos": null,
+        "scaleX": null,
+        "scaleY": null,
+        "rect": {
+          "xPct": 0,
+          "yPct": -0.7906,
+          "wPct": 0.1333333333333333,
+          "hPct": 0.075,
+          "type": "CPct"
+        }
+      },
+      "screenOverlay": null,
+      "screenOverlayFileId": null,
+      "screenOverlays": [],
+      "enableScreenOverlay": null,
+      "disableScreenOverlay": false,
+      "enableBroll": null,
+      "enableAutoTransition": null,
+      "selectedTransitions": [],
+      "enableAutoZoom": null,
+      "enableVoiceEnhancement": false,
+      "curseWordsConfig": null,
+      "enableSpeakerDetection": null,
+      "speakersColor": [
+        {
+          "id": "SPEAKER_00",
+          "name": "Speaker 1",
+          "color": "#979BFF"
+        },
+        {
+          "id": "SPEAKER_01",
+          "name": "Speaker 2",
+          "color": "#FFDA7D"
+        },
+        {
+          "id": "SPEAKER_02",
+          "name": "Speaker 3",
+          "color": "#C3FF7A"
+        },
+        {
+          "id": "SPEAKER_03",
+          "name": "Speaker 4",
+          "color": "#97F8F8"
+        },
+        {
+          "id": "SPEAKER_04",
+          "name": "Speaker 5",
+          "color": "#FF759A"
+        },
+        {
+          "id": "UNKNOWN",
+          "name": "Unassigned speaker",
+          "color": "#A1A1AA"
+        }
+      ],
+      "enableSpeakerFirstLayout": null,
+      "autoHookStyle": null,
+      "titleStyle": null,
+      "titleGuidelines": null,
+      "titlePrompt": null
+    },
+    "customizedTemplate": {
+      "layouts": [],
+      "screenOverlays": [],
+      "intro": null,
+      "outro": null,
+      "sound": null,
+      "curseWordsLibrary": null,
+      "broll": null,
+      "removePause": null,
+      "removeFillerWord": null
+    },
+    "id": "665fefb18ce49592eaeff8a0",
+    "templateId": "clx1cumat009uxms4bkn24j6l",
+    "userId": "email|6519bbd9da1617bd4e726df7",
+    "orgId": "org_86yGi3ws6df7",
+    "name": "Preset template 1",
+    "isDefault": true,
+    "createAt": "2024-06-05T04:55:13.253Z",
+    "updateAt": "2026-05-19T00:56:55.555Z",
+    "presetId": "preset-1",
+    "type": null,
+    "status": "active",
+    "headVersion": null,
+    "definition": null,
+    "definitionRevision": null
+  }
+]

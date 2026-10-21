@@ -1,0 +1,72 @@
+{
+  "probe": "usage endpoint discovery",
+  "note": "No REST usage/credits endpoint is documented in the CLI; 5 attempts made. All values redacted of signed URLs; no Authorization header is saved.",
+  "attempts": [
+    {
+      "method": "GET",
+      "path": "/api/usage",
+      "status": 404,
+      "body": {
+        "status": 404,
+        "message": "Cannot GET /api/usage",
+        "name": "NotFoundException",
+        "path": "/api/usage",
+        "traceId": "4404621670931645675"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/credits",
+      "status": 404,
+      "body": {
+        "status": 404,
+        "message": "Cannot GET /api/credits",
+        "name": "NotFoundException",
+        "path": "/api/credits",
+        "traceId": "7749062897178989597"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/me",
+      "status": 404,
+      "body": {
+        "status": 404,
+        "message": "Cannot GET /api/me",
+        "name": "NotFoundException",
+        "path": "/api/me",
+        "traceId": "7671872241975090555"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/upload-links",
+      "status": 201,
+      "body": {
+        "uploadId": "UPL_BZvgOk7FHB",
+        "cdnUrl": "<redacted-signed-url>",
+        "gsUrl": "gs://ext.gcs.opus.pro/upload/org_86yGi3ws6df7/email|6519bbd9da1617bd4e726df7/UPL_BZvgOk7FHB/video-raw.video",
+        "useAmount": 86365890,
+        "totalAmount": 107374182400
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/user",
+      "status": 404,
+      "body": {
+        "status": 404,
+        "message": "Cannot GET /api/user",
+        "name": "NotFoundException",
+        "path": "/api/user",
+        "traceId": "3198598532599230471"
+      }
+    }
+  ],
+  "interpretation": {
+    "useAmount_bytes": 86365890,
+    "totalAmount_bytes": 107374182400,
+    "totalAmount_GiB": 100,
+    "meaning": "useAmount/totalAmount on /upload-links is upload STORAGE quota in bytes (100 GiB cap), not clip credits. Credits are not exposed on the REST API; only the MCP tool opusclip_get_usage (OAuth) reports them."
+  }
+}

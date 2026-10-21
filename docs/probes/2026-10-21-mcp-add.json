@@ -1,0 +1,7 @@
+{
+  "probe": "claude mcp add opusclip",
+  "command": "claude mcp add --transport http opusclip https://mcp.opus.pro/mcp --scope user",
+  "exit_code": 0,
+  "output": "Added HTTP MCP server opusclip with URL: https://mcp.opus.pro/mcp to user config\nFile modified: /Users/mikelady/.claude-secondary/.claude.json\n",
+  "note": "The config file written is the one this session's CLAUDE_CONFIG_DIR points at (.claude-secondary), not ~/.claude.json. OAuth sign-in to mcp.opus.pro still has to be completed by the user in an interactive `claude` session (/mcp), it cannot be done headless."
+}
