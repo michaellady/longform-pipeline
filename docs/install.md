@@ -115,8 +115,7 @@ Every `longform` subcommand the skills and wizard call. Exit codes follow sysexi
 | `longform opus accounts` | wizard stage 6 | list connected OpusClip social accounts and ids |
 | `longform opus usage` | skill, draft | running credit estimate (2 x source minutes per job); true balance via the MCP `opusclip_get_usage` |
 | `longform opus schedule --cells <file>` | skill, approve | `POST /publish-schedules` per cell at 1 req/s, verbatim responses on stdout |
-| `longform opus schedule-list --profile <p>` | skill, draft (optional) | existing scheduled posts as cells; the skill falls back to the MCP or `[]` |
-| `longform opus strip-overlay --job <dir>` | binary at `clipped`; skill if the first clip still shows an overlay | free overlay-strip re-render per short |
+| `longform opus strip-overlay --project <id> --clip <id> [--wait] [--force]` | binary at `clipped`; skill if a clip still shows an overlay | free overlay-strip re-render per short; skips when no overlay is present |
 | `longform opus export` | you | export URLs for clips |
 | `longform manifest init --job <dir>` | skill, approve | create `manifest.json` |
 | `longform manifest ensure-clip --job <dir>` | skill, approve | add a clip entry if missing |

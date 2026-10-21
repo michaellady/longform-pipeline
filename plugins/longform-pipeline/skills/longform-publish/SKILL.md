@@ -113,8 +113,9 @@ full video goes to. `account_id` is `profile.opusclip.accounts[<platform>]`;
 6. Overlay (profile `opusclip.strip_overlay: true` only): the binary strips at
    `clipped`, but confirm. If `job.json.opusclip.overlay_stripped` is false and the
    first clip's describe payload in `analysis/opus-transcripts.json` shows an overlay,
-   run `longform opus strip-overlay --job <jobdir>` and wait for it; if the payload shows
-   no overlay (the only brand template, `665fefb18ce49592eaeff8a0`, has none), skip it.
+   run `longform opus strip-overlay --project <shorts_project_id> --clip <clip_id> --wait`
+   per short (it skips by itself when the payload shows no overlay; the only brand
+   template, `665fefb18ce49592eaeff8a0`, has none, so expect it to skip).
 
 ### Phase 2 — Pick clips
 
@@ -238,8 +239,10 @@ three rounds, put the unresolved finding in `decisions[]` and hold the affected 
 
 1. Existing schedule: write `<jobdir>/review/existing.json` as an array of
    `{platform, account_id, publish_at}`. Source, in order of preference:
-   `longform opus schedule-list --profile <p>` if the binary has it; else the
-   `opusclip_list_scheduled_posts` MCP tool; else an empty array `[]`.
+   the `opusclip_list_scheduled_posts` MCP tool when the OpusClip MCP is connected
+   (the binary has no schedule-list command: OpusClip exposes no listing endpoint to
+   the REST key); else `longform manifest schedule-ids` across recent jobs
+   (`longform status --json`); else an empty array `[]`.
 2. Write the cells you intend to post (every `post` clip cell plus the full-video
    cells) to `<jobdir>/review/cells.json` with `publish_at: ""`.
 3. `longform slots propose --profile <p> --cells <jobdir>/review/cells.json --existing <jobdir>/review/existing.json`

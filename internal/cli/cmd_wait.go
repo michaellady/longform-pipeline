@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/michaellady/longform-pipeline/internal/model"
@@ -79,7 +80,7 @@ func runWait(args []string) int {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	interval := fs.Duration("interval", 270*time.Second, "poll interval")
 	ceiling := fs.Duration("ceiling", 2*time.Hour, "give up (exit 75) after this long")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagsFirst(args)); err != nil {
 		return 64
 	}
 	if fs.NArg() != 1 {
@@ -296,4 +297,25 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
+}
+
+// flagsFirst lets a job-stage command accept `<jobdir> --flag` as well as
+// `--flag <jobdir>`: Go's flag package stops at the first positional, so the
+// positional is moved to the end before parsing.
+func flagsFirst(args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if len(a) > 1 && a[0] == '-' {
+			flags = append(flags, a)
+			// a flag written as "--name value" carries its value in the next arg
+			if !strings.Contains(a, "=") && i+1 < len(args) && !(len(args[i+1]) > 0 && args[i+1][0] == '-') && !strings.HasSuffix(a, "force") && !strings.HasSuffix(a, "wait") && !strings.HasSuffix(a, "once") && !strings.HasSuffix(a, "json") {
+				flags = append(flags, args[i+1])
+				i++
+			}
+			continue
+		}
+		positional = append(positional, a)
+	}
+	return append(flags, positional...)
 }
