@@ -105,21 +105,21 @@ type Artifacts struct {
 // Job is the per-video record the longform binary owns. Judgment never lives
 // here; the skill writes its decisions into review/draft.json.
 type Job struct {
-	SchemaVersion string       `json:"schema_version"`
-	ID            string       `json:"id"`
-	Profile       string       `json:"profile"`
-	Slug          string       `json:"slug"`
-	State         State        `json:"state"`
-	CreatedAt     time.Time    `json:"created_at"`
-	UpdatedAt     time.Time    `json:"updated_at"`
-	ContentHash   string       `json:"content_hash"` // sha256 over sorted source hashes
-	Sources       []Source     `json:"sources"`
-	Stitched      bool         `json:"stitched"`
-	Delivery      *Probe       `json:"delivery_probe,omitempty"`
-	OpusClip      OpusClipRefs `json:"opusclip"`
-	Artifacts     Artifacts    `json:"artifacts"`
-	History       []Transition `json:"history"`
-	Error         string       `json:"error,omitempty"`
+	SchemaVersion string         `json:"schema_version"`
+	ID            string         `json:"id"`
+	Profile       string         `json:"profile"`
+	Slug          string         `json:"slug"`
+	State         State          `json:"state"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	ContentHash   string         `json:"content_hash"` // sha256 over sorted source hashes
+	Sources       []Source       `json:"sources"`
+	Stitched      bool           `json:"stitched"`
+	Delivery      *Probe         `json:"delivery_probe,omitempty"`
+	OpusClip      OpusClipRefs   `json:"opusclip"`
+	Artifacts     Artifacts      `json:"artifacts"`
+	History       []Transition   `json:"history"`
+	Error         string         `json:"error,omitempty"`
 	Extra         map[string]any `json:"extra,omitempty"`
 
 	dir string

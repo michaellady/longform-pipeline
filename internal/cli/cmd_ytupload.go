@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -96,15 +95,7 @@ func runYTUpload(args []string) int {
 	return printJSON(res)
 }
 
-func printJSON(v any) int {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		fmt.Fprintln(os.Stderr, "yt-upload:", err)
-		return 70
-	}
-	return 0
-}
+// printJSON is shared with cmd_opus.go (same package).
 
 func humanBytes(n int64) string {
 	const unit = 1024

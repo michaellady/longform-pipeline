@@ -3,3 +3,4 @@ dist/
 *.local.json
 .DS_Store
 *.tmp-*
+.claude/

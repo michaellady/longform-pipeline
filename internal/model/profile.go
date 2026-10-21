@@ -12,25 +12,25 @@ import (
 // setup wizard writes one per brand under ProfilesDir(). See
 // docs/profile-schema.md for field semantics.
 type Profile struct {
-	Name        string            `json:"name"`
-	Brand       Brand             `json:"brand"`
-	Inbox       string            `json:"inbox"`
-	Orientation string            `json:"orientation"` // "portrait" | "landscape"
-	Stitch      StitchConfig      `json:"stitch"`
-	Stabilize   StabilizeConfig   `json:"stabilize"`
-	Censor      CensorConfig      `json:"censor"`
-	Transcribe  TranscribeConfig  `json:"transcribe"`
-	OpusClip    OpusClipConfig    `json:"opusclip"`
-	Cadence     map[string]int    `json:"cadence"` // platform -> posts per day
-	SlotsLocal  []string          `json:"slots_local"`
-	Timezone    string            `json:"timezone"`
-	BacklogDays int               `json:"backlog_days"`
-	CTA         CTAConfig         `json:"cta"`
-	Copy        CopyConfig        `json:"copy"`
-	Buffer      BufferConfig      `json:"buffer"`
-	Statics     StaticsConfig     `json:"statics"`
-	Notify      NotifyConfig      `json:"notify"`
-	Extra       map[string]any    `json:"extra,omitempty"`
+	Name        string           `json:"name"`
+	Brand       Brand            `json:"brand"`
+	Inbox       string           `json:"inbox"`
+	Orientation string           `json:"orientation"` // "portrait" | "landscape"
+	Stitch      StitchConfig     `json:"stitch"`
+	Stabilize   StabilizeConfig  `json:"stabilize"`
+	Censor      CensorConfig     `json:"censor"`
+	Transcribe  TranscribeConfig `json:"transcribe"`
+	OpusClip    OpusClipConfig   `json:"opusclip"`
+	Cadence     map[string]int   `json:"cadence"` // platform -> posts per day
+	SlotsLocal  []string         `json:"slots_local"`
+	Timezone    string           `json:"timezone"`
+	BacklogDays int              `json:"backlog_days"`
+	CTA         CTAConfig        `json:"cta"`
+	Copy        CopyConfig       `json:"copy"`
+	Buffer      BufferConfig     `json:"buffer"`
+	Statics     StaticsConfig    `json:"statics"`
+	Notify      NotifyConfig     `json:"notify"`
+	Extra       map[string]any   `json:"extra,omitempty"`
 }
 
 type Brand struct {
@@ -85,8 +85,8 @@ type FullRenderConfig struct {
 }
 
 type CTAConfig struct {
-	LeadMagnets         map[string]string `json:"lead_magnets"`   // name -> url
-	CommentToDM         map[string]string `json:"comment_to_dm"`  // platform -> keyword
+	LeadMagnets         map[string]string `json:"lead_magnets"`  // name -> url
+	CommentToDM         map[string]string `json:"comment_to_dm"` // platform -> keyword
 	UTMSourceByPlatform bool              `json:"utm_source_by_platform"`
 }
 
