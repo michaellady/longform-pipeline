@@ -57,7 +57,7 @@ make install
 ```
 
 ```
-/longform-setup
+/longform-pipeline:longform-setup
 ```
 
 Then record, Share → the Shortcut, and wait for the brief. Approve with
