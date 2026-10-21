@@ -1,0 +1,38 @@
+{
+  "probe": "skipCurate clips",
+  "project": "P3102119MVDK",
+  "polled_at": "2026-10-21T19:25:28Z",
+  "seconds_after_create": 175,
+  "list": [
+    {
+      "project_id": "P3102119MVDK",
+      "clip_id": "f6471d8959",
+      "rank": null,
+      "score": null,
+      "title": "probe-skipcurate_OpusClip Captions",
+      "description": null,
+      "hashtags": null,
+      "duration_sec": 60,
+      "is_bonus": false,
+      "preview_url": "<redacted-signed-url>",
+      "export_url": "<redacted-signed-url>",
+      "thumbnail_url": "<redacted-signed-url>"
+    }
+  ],
+  "summary": [
+    {
+      "project_id": "P3102119MVDK",
+      "clip_id": "f6471d8959",
+      "rank": null,
+      "score": null,
+      "title": "probe-skipcurate_OpusClip Captions",
+      "description": null,
+      "hashtags": null,
+      "duration_sec": 60,
+      "hook_score": null,
+      "coherence_score": null,
+      "connection_score": null,
+      "trend_score": null
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+[
+  {
+    "postAccountId": "692de02b91c67f8d789184b7",
+    "subAccountId": null,
+    "platform": "YOUTUBE",
+    "name": "Enterprise Vibe Code",
+    "profile_url": "https://www.youtube.com/channel/UCyxYcJWs5WstpM2h8KjabUw"
+  },
+  {
+    "postAccountId": "692de728a051693fc574d226",
+    "subAccountId": "17841463373309509",
+    "platform": "INSTAGRAM_BUSINESS",
+    "name": "Enterprise Vibe Code",
+    "profile_url": "https://www.instagram.com/enterprisevibecode"
+  },
+  {
+    "postAccountId": "6946d924a163ebb2222f505b",
+    "subAccountId": "913906768469231",
+    "platform": "FACEBOOK_PAGE",
+    "name": "Enterprise Vibe Code",
+    "profile_url": "https://www.facebook.com/913906768469231"
+  },
+  {
+    "postAccountId": "6946d924a163ebb2222f505b",
+    "subAccountId": "105781831380124",
+    "platform": "FACEBOOK_PAGE",
+    "name": "Sandbox BJJ",
+    "profile_url": "https://www.facebook.com/105781831380124"
+  },
+  {
+    "postAccountId": "6946d924a163ebb2222f505b",
+    "subAccountId": "2219025691528599",
+    "platform": "FACEBOOK_PAGE",
+    "name": "Mike Lady",
+    "profile_url": "https://www.facebook.com/2219025691528599"
+  },
+  {
+    "postAccountId": "6946d90baa6724e2abd24d09",
+    "subAccountId": "urn:li:organization:109952978",
+    "platform": "LINKEDIN",
+    "name": "Enterprise Vibe Code",
+    "profile_url": "https://www.linkedin.com/company/109952978"
+  },
+  {
+    "postAccountId": "6946d90baa6724e2abd24d09",
+    "subAccountId": "urn:li:person:9mS0FNJDCZ",
+    "platform": "LINKEDIN",
+    "name": "Mike Lady",
+    "profile_url": "https://www.linkedin.com/in/mikelady/recent-activity/all/"
+  }
+]

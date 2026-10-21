@@ -1,0 +1,62 @@
+{
+  "probe": "clipDurations buckets 30/60/180 on a 60 s source",
+  "project": "P3102119Mduz",
+  "requested_clipDurations": [
+    [
+      0,
+      30
+    ],
+    [
+      0,
+      60
+    ],
+    [
+      0,
+      180
+    ]
+  ],
+  "poll_log": [
+    "2026-10-21T19:24:27Z poll=1 project=P3102119MVDK clips=0 all_exportable=none",
+    "2026-10-21T19:24:27Z poll=1 project=P3102119Mduz clips=0 all_exportable=none",
+    "2026-10-21T19:25:28Z poll=2 project=P3102119MVDK clips=1 all_exportable=true",
+    "2026-10-21T19:25:28Z poll=2 project=P3102119Mduz clips=0 all_exportable=none",
+    "2026-10-21T19:26:30Z poll=3 project=P3102119MVDK clips=1 all_exportable=true",
+    "2026-10-21T19:26:30Z poll=3 project=P3102119Mduz clips=1 all_exportable=true",
+    "2026-10-21T19:26:30Z both projects exportable after poll 3"
+  ],
+  "clips_at_poll_1": 0,
+  "clips_at_poll_2": 0,
+  "polled_final_at": "2026-10-21T19:26:54Z",
+  "list": [
+    {
+      "project_id": "P3102119Mduz",
+      "clip_id": "qp4hWnJTOl",
+      "rank": 1,
+      "score": 87,
+      "title": "Gastown AI Agents: From 5 to 36 PRs in Hours",
+      "description": "A first-hand look at using Gastown, parallel polecat workers, and the Beads issue tracker across several software modules. PR counts vary in size and scope, so they’re not a measure of code quality—but this workflow made a striking difference in one developer’s experience.",
+      "hashtags": "#Gastown #AIAgents #CodingAgents #SoftwareDevelopment #DeveloperTools #OpenSource #GitHub #PRs #AgenticAI #CodingWorkflow",
+      "duration_sec": 42,
+      "is_bonus": false,
+      "preview_url": "<redacted-signed-url>",
+      "export_url": "<redacted-signed-url>",
+      "thumbnail_url": "<redacted-signed-url>"
+    }
+  ],
+  "summary": [
+    {
+      "project_id": "P3102119Mduz",
+      "clip_id": "qp4hWnJTOl",
+      "rank": 1,
+      "score": 87,
+      "title": "Gastown AI Agents: From 5 to 36 PRs in Hours",
+      "description": "A first-hand look at using Gastown, parallel polecat workers, and the Beads issue tracker across several software modules. PR counts vary in size and scope, so they’re not a measure of code quality—but this workflow made a striking difference in one developer’s experience.",
+      "hashtags": "#Gastown #AIAgents #CodingAgents #SoftwareDevelopment #DeveloperTools #OpenSource #GitHub #PRs #AgenticAI #CodingWorkflow",
+      "duration_sec": 42,
+      "hook_score": 7,
+      "coherence_score": 7,
+      "connection_score": 6,
+      "trend_score": 7
+    }
+  ]
+}
