@@ -1,6 +1,6 @@
 ---
 name: longform-verify
-description: "Prove the longform-pipeline works end to end: build the `longform` binary, drive one job from a dropped fixture file to a populated manifest against the fake OpusClip server, and inspect the artifact that proves each feature. Use for /longform-verify, \"verify the pipeline\", \"does the longform binary work\", before tagging a release, after merging a ticket, or when a stage command misbehaves. Never spends OpusClip credits."
+description: "Prove the longform-pipeline works end to end: build the `longform` binary, drive one job from a dropped fixture file to a populated manifest against the fake OpusClip server, and inspect the artifact that proves each feature. Use for /longform-pipeline:longform-verify, \"verify the pipeline\", \"does the longform binary work\", before tagging a release, after merging a ticket, or when a stage command misbehaves. Never spends OpusClip credits."
 ---
 
 # Verify the longform pipeline
@@ -80,7 +80,7 @@ and run the stage commands from the table above one at a time, reading `job.json
 
 ### Wizard dry run
 
-`/longform-setup` ends with a dry run on the bundled fixture. The dry run is the same drive with `OPUSCLIP_API_URL` set to a `longform fakeopus` instance and `OPUSCLIP_API_KEY=test`; it must reach `clipped` (ticket 0's done condition). The fake's `--delay` flag (e.g. `--delay 5s`) makes `wait` actually poll; `--duration-sec` sets the full clip's length when the uploaded MP4 has no readable `mvhd`.
+`/longform-pipeline:longform-setup` ends with a dry run on the bundled fixture. The dry run is the same drive with `OPUSCLIP_API_URL` set to a `longform fakeopus` instance and `OPUSCLIP_API_KEY=test`; it must reach `clipped` (ticket 0's done condition). The fake's `--delay` flag (e.g. `--delay 5s`) makes `wait` actually poll; `--duration-sec` sets the full clip's length when the uploaded MP4 has no readable `mvhd`.
 
 ## Feature map
 
@@ -100,7 +100,7 @@ Each row: the feature, the command that proves it, the artifact to inspect, and 
 | 4 | Gates | `longform gate validate --profile evc --cells C` | exit code | 0 for a clean set; 65 with a named reason for an over-length title or a profane caption |
 | 6 | Schedule | `longform opus schedule --cells C` | stdout JSON lines; fake log | one line per cell with `response.data.scheduleId`; calls paced at 1 req/s; never a non-`Bearer test` auth value |
 | 6 | Manifest | `longform manifest init`, `manifest append-post --file R` | `manifest.json` | `scheduled_posts` has one entry per cell with the verbatim response and a `schedule_id` the fake issued |
-| 0 | Wizard dry run | `/longform-setup` with `OPUSCLIP_API_URL` = fake | `job.json` | job reaches `clipped` on the bundled fixture |
+| 0 | Wizard dry run | `/longform-pipeline:longform-setup` with `OPUSCLIP_API_URL` = fake | `job.json` | job reaches `clipped` on the bundled fixture |
 | 9 | Fake fidelity | `go test ./internal/fakeopus/` | test output | upload, project, clip, editing-script, re-render, schedule, 401 and 429 paths all pass |
 
 Not covered by the harness (see docs/verification.md "Known gaps"): HDR tonemapping, vidstab, BJJ stitching, real whisper output, Buffer statics, Slack and macOS notifications, YouTube native posting, the `monitored` tick.

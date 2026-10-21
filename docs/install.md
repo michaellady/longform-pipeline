@@ -24,7 +24,7 @@ In Claude Code:
 /plugin install longform-pipeline
 ```
 
-That gives you `/longform-setup` and `/longform-publish`, the launchd template, and
+That gives you `/longform-pipeline:longform-setup` and `/longform-pipeline:longform-publish`, the launchd template, and
 the wizard script under the plugin cache. The `longform` binary is separate (next
 step) because a plugin cache is not a place for a 10 MB executable.
 
@@ -56,7 +56,7 @@ The wizard finds the binary at `$LONGFORM_BIN`, then
 ## 4. Wizard
 
 ```
-/longform-setup
+/longform-pipeline:longform-setup
 ```
 
 or in a terminal:
@@ -138,7 +138,7 @@ In Claude Code: `/plugin uninstall longform-pipeline`.
 ## Headless editorial sessions need a logged-in `claude`
 
 `longform launch-session` (called by the watcher once a job is `clipped`) runs
-`claude -p "/longform-publish <jobdir>"` as the launchd user. That only works when:
+`claude -p "/longform-pipeline:longform-publish <jobdir>"` as the launchd user. That only works when:
 
 - the `claude` CLI on the watcher's PATH is logged in for the config directory it
   will use (`CLAUDE_CONFIG_DIR` if set in the LaunchAgent's environment, else
@@ -167,3 +167,14 @@ binary rather than a working tree:
 ```bash
 bash ~/.claude/plugins/cache/longform-pipeline/longform-pipeline/<version>/scripts/setup.sh
 ```
+
+### Symptoms in `<LogRoot>/<job>.session.json`
+
+| `result` text | Meaning | Fix |
+|---|---|---|
+| `Unknown command: /longform-publish` | the plugin is not installed in the config directory this `claude` uses, or an old binary invoked the bare name | install the plugin there; skills are `/longform-pipeline:<skill>` |
+| `Failed to authenticate: OAuth session expired and could not be refreshed` | the CLI's sign-in lapsed | run `claude` in a terminal, `/login`, then relaunch |
+| `Not logged in · Please run /login` | never signed in for that config directory | same |
+
+Relaunch a job whose session failed with `longform launch-session --force <jobdir>`;
+the watcher launches each job only once on its own.

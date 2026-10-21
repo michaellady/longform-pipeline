@@ -1,6 +1,6 @@
 ---
 name: longform-setup
-description: "Onboarding wizard for the longform-pipeline plugin: creates a brand profile, the iCloud inbox folder, stores the OpusClip key, adds the OpusClip MCP, captures OpusClip account ids and Buffer tag ids, prints the iPhone Shortcut recipe, installs the launchd watcher, and dry-runs a 30-second fixture. Triggers: /longform-setup, 'set up longform', 'add a new brand profile', 'install the longform watcher', 'reinstall launchd for longform', 'longform onboarding'."
+description: "Onboarding wizard for the longform-pipeline plugin: creates a brand profile, the iCloud inbox folder, stores the OpusClip key, adds the OpusClip MCP, captures OpusClip account ids and Buffer tag ids, prints the iPhone Shortcut recipe, installs the launchd watcher, and dry-runs a 30-second fixture. Triggers: /longform-pipeline:longform-setup, 'set up longform', 'add a new brand profile', 'install the longform watcher', 'reinstall launchd for longform', 'longform onboarding'."
 user_invocable: true
 ---
 
