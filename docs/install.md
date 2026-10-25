@@ -178,3 +178,20 @@ bash ~/.claude/plugins/cache/longform-pipeline/longform-pipeline/<version>/scrip
 
 Relaunch a job whose session failed with `longform launch-session --force <jobdir>`;
 the watcher launches each job only once on its own.
+
+## Running everything inside the Claude desktop app
+
+The Claude desktop app's Code tab runs with its own config directory (its shell
+exports `CLAUDE_CONFIG_DIR`, for example `~/.claude-secondary`), separate from the
+terminal CLI's `~/.claude`. Plugins, MCP entries and sign-ins live per config
+directory, so the whole pipeline must agree on one:
+
+1. Install the plugin from the app's Code tab shell (so it lands in the app's config).
+2. Run the wizard from that same shell. It registers the OpusClip MCP there and
+   writes `CLAUDE_CONFIG_DIR` into the LaunchAgent, so the headless editorial
+   session that launchd starts uses the app's plugin, MCP and sign-in.
+3. Authorize the OpusClip MCP once from a session in the app: `/mcp` → `opusclip`
+   → Authenticate.
+
+To move the pipeline to the terminal CLI instead, re-run the wizard from a terminal
+where `CLAUDE_CONFIG_DIR` is unset; `make launchd-install` re-renders the agent.
