@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/michaellady/longform-pipeline/internal/model"
 )
@@ -60,9 +61,11 @@ type Schedule struct {
 
 // ParseGrammar turns the reply into a DecisionRecord. Commands are separated
 // by `;` or `,`; inside `approve except` and `drop`, commas join row numbers.
-// Any token that is not a command is an error naming it.
+// `reject` takes everything after it as the note, punctuation included, so it
+// is always the last command. Any token that is not a command is an error
+// naming it.
 func ParseGrammar(grammar string, d *Draft) (*DecisionRecord, error) {
-	toks := tokenize(grammar)
+	toks, ends := tokenize(grammar)
 	if len(toks) == 0 {
 		return nil, fmt.Errorf("%w: empty", ErrGrammar)
 	}
@@ -204,9 +207,13 @@ func ParseGrammar(grammar string, d *Draft) (*DecisionRecord, error) {
 				return nil, err
 			}
 			rec.Decisions[dec.ID] = choice
-		case "reject":
+		case "reject", "reject:":
+			// A reason is prose and may contain commas or semicolons, so the
+			// note is the raw remainder of the text, not the next tokens.
 			rec.Approved = false
-			rec.Note = readText()
+			note := strings.TrimSpace(grammar[ends[i-1]:])
+			rec.Note = strings.TrimSpace(strings.TrimPrefix(note, ":"))
+			i = len(toks)
 		default:
 			return nil, fmt.Errorf("%w: unknown token %q", ErrGrammar, t)
 		}
@@ -238,10 +245,34 @@ func matchOption(dec *Decision, text string) (string, error) {
 }
 
 // tokenize splits on whitespace and makes `;` and `,` their own tokens.
-func tokenize(s string) []string {
-	s = strings.ReplaceAll(s, ";", " ; ")
-	s = strings.ReplaceAll(s, ",", " , ")
-	return strings.Fields(s)
+// tokenize splits the grammar into words and the separators `;` and `,`, and
+// records the byte offset just past each token so a command can take the raw
+// remainder of the text.
+func tokenize(s string) (toks []string, ends []int) {
+	start := -1
+	flush := func(end int) {
+		if start >= 0 {
+			toks = append(toks, s[start:end])
+			ends = append(ends, end)
+			start = -1
+		}
+	}
+	for i, r := range s {
+		switch {
+		case r == ';' || r == ',':
+			flush(i)
+			toks = append(toks, string(r))
+			ends = append(ends, i+1)
+		case unicode.IsSpace(r):
+			flush(i)
+		default:
+			if start < 0 {
+				start = i
+			}
+		}
+	}
+	flush(len(s))
+	return toks, ends
 }
 
 func appendUnique(xs []int, ns ...int) []int {

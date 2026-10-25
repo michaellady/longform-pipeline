@@ -183,6 +183,24 @@ func TestParseGrammar(t *testing.T) {
 			}
 			return ""
 		}},
+		{"reject 4-second pipeline test, not for publishing; rerecord", func(r *DecisionRecord) string {
+			if r.Approved || r.Note != "4-second pipeline test, not for publishing; rerecord" {
+				return "reject keeps the note verbatim, punctuation included"
+			}
+			return ""
+		}},
+		{"hold linkedin; reject: too short", func(r *DecisionRecord) string {
+			if r.Approved || len(r.HeldPlatforms) != 1 || r.Note != "too short" {
+				return "reject after another clause, colon stripped"
+			}
+			return ""
+		}},
+		{"reject", func(r *DecisionRecord) string {
+			if r.Approved || r.Note != "" {
+				return "bare reject has an empty note"
+			}
+			return ""
+		}},
 		{"hold instagram; drop 1", func(r *DecisionRecord) string {
 			if !r.Approved || len(r.DroppedClips) != 1 || r.DroppedClips[0] != 1 || r.HeldPlatforms[0] != "instagram" {
 				return "hold+drop"
