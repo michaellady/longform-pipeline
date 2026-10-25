@@ -71,3 +71,13 @@ both ways is harmless.
 | Shortcut missing from the Share sheet | Share Sheet Types does not include Media | step 3 |
 | File lands but no job | watcher not loaded, or still an iCloud placeholder | `make launchd-install`; wait for the 10-minute tick |
 | Job created twice | different file content (re-export changes bytes) | expected; the second is a new job |
+
+## Building it on the Mac instead
+
+The wizard (stage 9) and `longform shortcut --profile <profile> --open` build the
+same shortcut as a signed `.shortcut` file under
+`~/.config/longform-pipeline/shortcuts/` and open it in the Mac's Shortcuts app.
+Click **Add Shortcut** once; with Shortcuts' iCloud sync on, it appears on the
+iPhone within a minute, in the Share sheet under "Send to <brand> inbox".
+Signing uses the macOS `shortcuts sign` tool (macOS 12 or later), so the file
+imports on any of your devices. The steps above remain the fallback.

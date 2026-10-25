@@ -24,8 +24,10 @@ split into what you do once per brand and what you do per video.
 
    Without them clips and the full video still post; only the static image
    posts wait.
-5. **Build the iPhone Shortcut** for the profile: `shortcut-recipe.md` (about
-   five minutes). Name it "Send to <profile> inbox".
+5. **Add the iPhone Shortcut** for the profile. The wizard builds and signs it
+   on the Mac (`longform shortcut --profile <p> --open`); click "Add Shortcut"
+   in the Shortcuts window once and iCloud syncs it to the phone. Building it by
+   hand on the phone takes five minutes: `shortcut-recipe.md`.
 6. **Sign the CLI in** once in the same config directory the LaunchAgent uses:
    open `claude` from the app's terminal (or the matching alias) and run
    `/login`. `install.md` lists the symptoms if this is missed.

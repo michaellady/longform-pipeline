@@ -489,8 +489,19 @@ fi
 
 # ── 9 ──────────────────────────────────────────────────────────────────────
 stage "iPhone Shortcut"
-print_shortcut_recipe
-pause "Shortcut built (or you'll do it later)?"
+say "The Shortcut can be built here: the Mac's Shortcuts app imports it after one click"
+say "and iCloud syncs it to the phone. Building it by hand on the phone also works."
+if BIN=$(find_bin) && command -v shortcuts >/dev/null 2>&1; then
+  if "$BIN" shortcut --profile "$PROFILE" --brand "$BRAND_DISPLAY" --open; then
+    step "Click 'Add Shortcut' in the Shortcuts window that just opened. It appears on the iPhone within a minute (Shortcuts → iCloud sync must be on)."
+  else
+    warn "could not build the shortcut here; build it by hand instead:"
+    print_shortcut_recipe
+  fi
+else
+  print_shortcut_recipe
+fi
+pause "Shortcut added (or you'll do it later)?"
 
 # ── 10 ─────────────────────────────────────────────────────────────────────
 stage "Write the profile"
