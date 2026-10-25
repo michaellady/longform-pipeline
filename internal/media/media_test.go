@@ -81,8 +81,9 @@ func TestTonemapFilter(t *testing.T) {
 		t.Errorf("defaults for missing primaries/matrix: %s", got)
 	}
 	got = TonemapFilter(false, "smpte2084", "bt2020", "bt2020nc")
-	if got != "format=gbrpf32le,tonemap=tonemap=hable:desat=0,format=yuv420p" {
-		t.Errorf("fallback chain: %s", got)
+	if !strings.HasPrefix(got, "format=gbrpf32le,tonemap=tonemap=hable:desat=0,format=yuv420p,") ||
+		!strings.HasSuffix(got, ",setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv") {
+		t.Errorf("fallback chain must tonemap then tag BT.709 via setparams: %s", got)
 	}
 	if strings.Contains(got, "zscale") {
 		t.Error("fallback must not reference zscale")

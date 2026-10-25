@@ -10,6 +10,13 @@ brew install jq ffmpeg whisper-cpp
 # optional: shellcheck (lint the wizard), go (build from source)
 ```
 
+- Homebrew's ffmpeg 9 ships without the `vidstabdetect` and `zscale` filters.
+  `longform prepare` copes: stabilisation falls back to `deshake` (or is
+  skipped when neither filter exists) and HDR recordings are tonemapped with
+  the plain `tonemap` filter. The method used is recorded under
+  `extra.prepare.stabilize_method` and `extra.prepare.tonemap_filter` in
+  `job.json`. Install an ffmpeg build with libvidstab and zimg to get the
+  two-pass stabiliser and the more accurate tonemap back.
 - Claude Code with the Buffer MCP connected (statics) and, after the wizard, the
   OpusClip MCP (interactive sessions).
 - An OpusClip plan with API access (Pro or Enterprise). The key goes into

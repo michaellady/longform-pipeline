@@ -105,10 +105,19 @@ func TestIntegrationPrepareSDRStabilize(t *testing.T) {
 	if job.State != model.StatePrepared {
 		t.Fatalf("state = %s", job.State)
 	}
-	for _, rel := range []string{DeliveryOut, TranscriptOut, CensoredOut, StabilizeBefore, StabilizeAfter, RemuxOut, StabilizedOut, TransformsOut, WhisperOut, LogOut} {
+	for _, rel := range []string{DeliveryOut, TranscriptOut, CensoredOut, StabilizeBefore, StabilizeAfter, RemuxOut, StabilizedOut, WhisperOut, LogOut} {
 		if st, err := os.Stat(job.Path(rel)); err != nil || st.Size() == 0 {
 			t.Errorf("missing or empty %s: %v", rel, err)
 		}
+	}
+	// The method follows the local ffmpeg: vidstab writes a transforms file,
+	// the deshake fallback does not.
+	if ex, _ := job.Extra["prepare"].(map[string]any); ex["stabilize_method"] == "vidstab" {
+		if st, err := os.Stat(job.Path(TransformsOut)); err != nil || st.Size() == 0 {
+			t.Errorf("vidstab run without %s: %v", TransformsOut, err)
+		}
+	} else {
+		t.Logf("stabilize_method = %v (this ffmpeg has no vidstab)", ex["stabilize_method"])
 	}
 	if job.Artifacts.Delivery != DeliveryOut || job.Artifacts.Transcript != TranscriptOut || job.Artifacts.Censored != CensoredOut || job.Artifacts.StabilizeBefore != StabilizeBefore || job.Artifacts.StabilizeAfter != StabilizeAfter {
 		t.Errorf("artifacts: %+v", job.Artifacts)
@@ -163,7 +172,7 @@ func TestIntegrationPrepareHDRTonemap(t *testing.T) {
 		t.Errorf("delivery not tonemapped: %+v", job.Delivery)
 	}
 	ex, _ := job.Extra["prepare"].(map[string]any)
-	if ex["tonemap_filter"] != "zscale" || ex["hdr"] != true || ex["transcribe_skipped"] != true {
+	if (ex["tonemap_filter"] != "zscale" && ex["tonemap_filter"] != "tonemap-only") || ex["hdr"] != true || ex["transcribe_skipped"] != true {
 		t.Errorf("extra.prepare = %+v", ex)
 	}
 	tr, err := transcribe.Load(job.Path(TranscriptOut))
