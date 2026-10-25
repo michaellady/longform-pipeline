@@ -15,10 +15,14 @@ import (
 // untagged frame cannot make zscale fail with "no path between colorspaces";
 // bt2020 is the only primaries set an iPhone HDR file uses. Without zscale the
 // fallback linearises via format conversion and tonemaps directly, which is
-// less accurate but keeps the pipeline moving.
+// less accurate but keeps the pipeline moving. The trailing setparams is what
+// tags the output BT.709: the tonemap filter emits frames marked "linear", and
+// ffmpeg 9 lets that frame metadata override the encoder-side -color_trc flags,
+// so an HDR probe would still see arib-std-b67 without it.
 func TonemapFilter(useZscale bool, transfer, primaries, matrix string) string {
 	if !useZscale {
-		return "format=gbrpf32le,tonemap=tonemap=hable:desat=0,format=yuv420p"
+		return "format=gbrpf32le,tonemap=tonemap=hable:desat=0,format=yuv420p," +
+			"setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
 	}
 	if primaries == "" || primaries == "unknown" {
 		primaries = "bt2020"
