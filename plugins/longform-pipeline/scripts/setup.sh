@@ -332,7 +332,10 @@ launchd_uninstall() {
 
 print_shortcut_recipe() {
   if [[ -f "$REPO_DOCS/shortcut-recipe.md" ]]; then
-    sed -e 's/<profile>/'"$PROFILE"'/g' "$REPO_DOCS/shortcut-recipe.md"
+    # The recipe names the profile, the brand and (when set) the album; | keeps
+    # a / in a brand name from ending the sed expression.
+    sed -e 's|<profile>|'"$PROFILE"'|g' -e 's|<Brand>|'"${BRAND_DISPLAY:-$PROFILE}"'|g' \
+        -e 's|<album>|'"${PHOTOS_ALBUM:-<album>}"'|g' "$REPO_DOCS/shortcut-recipe.md"
     return
   fi
   say "On the iPhone, open Shortcuts and create a new Shortcut named 'Send to $BRAND_DISPLAY inbox':"
@@ -344,6 +347,52 @@ print_shortcut_recipe() {
   step "  Turn ON 'Overwrite If File Exists'."
   step "Action 3: 'Show Notification' with text 'Sent to $PROFILE inbox'."
   step "Record a video, tap Share, pick the Shortcut. It lands in the inbox and the Mac picks it up."
+}
+
+# fda_steps tells the person how to give the binary launchd runs Full Disk
+# Access: osxphotos reads the Photos library database, which macOS guards.
+fda_steps() {
+  step "System Settings → Privacy & Security → Full Disk Access → + → press Cmd-Shift-G,"
+  step "  paste this path, click Open, and make sure its switch is on:"
+  note "    $BIN"
+  note "Check the grant again after 'make install' or a plugin update replaces that file."
+}
+
+# photos_access_check reads the profile's album once with the longform binary
+# (dry run: nothing staged, downloaded or notified) and says what is missing.
+photos_access_check() {
+  local rc=0
+  say "Reading the Photos album '$PHOTOS_ALBUM' once (dry run; can take a minute on a big library):"
+  # Run from the log folder: osxphotos drops osxphotos_crash.log in its cwd.
+  (cd "$LOG_DIR" && "$BIN" photos-watch --profile "$PROFILE" --dry-run) 2>&1 | sed 's/^/    /' || rc=$?
+  case $rc in
+    0)
+      printf '  %s✓ read%s the album %s from this terminal\n' "$GREEN" "$RESET" "$PHOTOS_ALBUM"
+      say "launchd runs the binary without this terminal's permissions, so it needs its"
+      say "own Full Disk Access grant, once:"
+      fda_steps
+      open_url "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+      ;;
+    69)
+      if [[ -z "${OSXPHOTOS:-}" ]]; then
+        warn "osxphotos is not installed: pipx install osxphotos (or brew install osxphotos), then re-run the wizard"
+      else
+        warn "osxphotos could not read the Photos library (message above)."
+        [[ -f "$LOG_DIR/osxphotos_crash.log" ]] && note "osxphotos details: $LOG_DIR/osxphotos_crash.log"
+        say "Grant Full Disk Access to the binary launchd runs (and to this terminal app"
+        say "if you want the check to pass from here too):"
+        fda_steps
+        open_url "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+        SKIPPED+=("Full Disk Access for $BIN, then check: $BIN photos-watch --profile $PROFILE --dry-run")
+      fi
+      ;;
+    *)
+      warn "longform photos-watch --dry-run exited $rc (message above)"
+      SKIPPED+=("Photos album check: $BIN photos-watch --profile $PROFILE --dry-run (exited $rc)")
+      ;;
+  esac
+  note "On this Mac: Photos → Settings → iCloud → 'Download Originals to this Mac', so each"
+  note "recording's full file arrives on its own; until it does the watcher waits and notifies once."
 }
 
 run_wizard() {
@@ -489,7 +538,46 @@ fi
 
 # ── 9 ──────────────────────────────────────────────────────────────────────
 stage "iPhone Shortcut"
-say "The Shortcut can be built here: the Mac's Shortcuts app imports it after one click"
+say "Two feeds carry a recording from the phone to this Mac:"
+step "a Photos album: one tap ('Mark for $BRAND_DISPLAY') adds the recording to the album and"
+say "  iCloud Photos syncs the bytes in the background (nothing is copied on the phone);"
+step "the iCloud Drive inbox: 'Send to $BRAND_DISPLAY inbox' copies the file (always built, the fallback)."
+PHOTOS_ALBUM_PREV="$(pdefault .photos.album "")"
+[[ -n "$PHOTOS_ALBUM_PREV" ]] && note "type - to turn the album feed off"
+ask_default PHOTOS_ALBUM "Photos album the phone tags recordings into (blank = iCloud Drive inbox only):" "$PHOTOS_ALBUM_PREV"
+[[ "$PHOTOS_ALBUM" == "-" ]] && PHOTOS_ALBUM=""
+# Kept from the existing profile (hand-edited only; see docs/profile-schema.md).
+PHOTOS_DL_MISSING="$(pdefault .photos.download_missing false)"
+[[ "$PHOTOS_DL_MISSING" == true ]] || PHOTOS_DL_MISSING=false
+PHOTOS_LIBRARY="$(pdefault .photos.library "")"
+# ls only tests two fixed install paths (pipx, Homebrew); nothing is parsed.
+# shellcheck disable=SC2012
+OSXPHOTOS=$(command -v osxphotos || ls "$HOME/.local/bin/osxphotos" /opt/homebrew/bin/osxphotos 2>/dev/null | head -1 || true)
+if [[ -n "$PHOTOS_ALBUM" ]]; then
+  # One pause when the album is set, whatever this Mac has installed, so the
+  # prompt count depends only on the answers (and the two Shortcuts import
+  # dialogs never stack).
+  if [[ -n "$OSXPHOTOS" ]]; then
+    note "osxphotos: $OSXPHOTOS (the watcher reads the album with it)"
+  else
+    warn "osxphotos not found; the watcher needs it to read the album: pipx install osxphotos (or brew install osxphotos)"
+    SKIPPED+=("install osxphotos for the Photos album feed: pipx install osxphotos (or brew install osxphotos), then re-run the wizard")
+  fi
+  step "On the iPhone: Photos → Albums → + → New Album, named exactly: $PHOTOS_ALBUM   (skip if it exists)."
+  [[ "$STITCH" == true ]] && note "stitching: add all of a class's clips to the album; the Mac waits until every one has synced, then stitches them into one job"
+  if BIN=$(find_bin) && command -v shortcuts >/dev/null 2>&1; then
+    if "$BIN" shortcut --profile "$PROFILE" --brand "$BRAND_DISPLAY" --kind mark --album "$PHOTOS_ALBUM" --open; then
+      step "Click 'Add Shortcut' for 'Mark for $BRAND_DISPLAY' in the Shortcuts window that just opened."
+    else
+      warn "could not build the Mark shortcut here; on the phone use Share → Add to Album → $PHOTOS_ALBUM instead"
+      SKIPPED+=("Mark shortcut: longform shortcut --profile $PROFILE --kind mark --album '$PHOTOS_ALBUM' --open (or Share → Add to Album on the phone)")
+    fi
+  else
+    note "the Mark shortcut needs the longform binary and the Mac Shortcuts app; until then use Share → Add to Album → $PHOTOS_ALBUM on the phone"
+  fi
+  pause "Album made and 'Mark for $BRAND_DISPLAY' added (or later)? Enter goes on to the inbox shortcut"
+fi
+say "The inbox Shortcut can be built here: the Mac's Shortcuts app imports it after one click"
 say "and iCloud syncs it to the phone. Building it by hand on the phone also works."
 if BIN=$(find_bin) && command -v shortcuts >/dev/null 2>&1; then
   if "$BIN" shortcut --profile "$PROFILE" --brand "$BRAND_DISPLAY" --open; then
@@ -555,10 +643,12 @@ jq -n \
   --arg bc_instagram "$BCHAN_instagram" --arg bc_linkedin "$BCHAN_linkedin" --arg bc_facebook "$BCHAN_facebook" --arg bc_threads "$BCHAN_threads" \
   --arg bt_quote "$BTAG_video_quote" --arg bt_carousel "$BTAG_video_carousel" --arg bt_still "$BTAG_video_still" --arg bt_frame "$BTAG_video_frame_carousel" \
   --arg templates "$TEMPLATES_DIR" --arg slack "$SLACK_CHANNEL" \
+  --arg album "$PHOTOS_ALBUM" --arg osxphotos "${OSXPHOTOS:-}" --argjson dlmissing "$PHOTOS_DL_MISSING" --arg plibrary "$PHOTOS_LIBRARY" \
   '{
     name: $name,
     brand: { display: $display, site: $site },
     inbox: $inbox,
+    photos: ({ enabled: ($album != ""), album: $album, download_missing: $dlmissing } + (if $osxphotos == "" then {} else { osxphotos: $osxphotos } end) + (if $plibrary == "" then {} else { library: $plibrary } end)),
     orientation: $orientation,
     stitch: { enabled: $stitch, session_window_min: $stitch_win },
     stabilize: { enabled: $stab, shakiness: 5, smoothing: 15, zoom: 3 },
@@ -598,6 +688,9 @@ stage "Install the launchd watcher"
 say "A LaunchAgent watches every profile inbox and ticks every 10 minutes."
 if launchd_install; then
   note "logs: $LOG_DIR/watch.log"
+  if [[ -n "$PHOTOS_ALBUM" ]] && BIN=$(find_bin); then
+    photos_access_check
+  fi
 else
   SKIPPED+=("launchd: run 'make launchd-install' after 'make install'")
 fi
@@ -618,7 +711,11 @@ if make_fixture "$FIXTURE" && BIN=$(find_bin); then
 else
   SKIPPED+=("dry run: make fixture && longform stage --profile $PROFILE --file $FIXTURE")
 fi
-note "Next: record a real video, Share → your Shortcut, then watch 'longform status'."
+if [[ -n "$PHOTOS_ALBUM" ]]; then
+  note "Next: record a real video, Share → 'Mark for $BRAND_DISPLAY', then watch 'longform status'."
+else
+  note "Next: record a real video, Share → your Shortcut, then watch 'longform status'."
+fi
 
 finish
 }

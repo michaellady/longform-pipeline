@@ -26,7 +26,7 @@ the wizard dry run:
 | Env var | Default | Holds |
 |---|---|---|
 | `LONGFORM_CONFIG_DIR` | `~/.config/longform-pipeline` | `profiles/<name>.json`, templates, corpora |
-| `LONGFORM_DATA_DIR` | `~/Library/Application Support/longform-pipeline` | `jobs/<id>/`, `jobs/jobs.json` (dedupe index), `watch.lock` |
+| `LONGFORM_DATA_DIR` | `~/Library/Application Support/longform-pipeline` | `jobs/<id>/`, `jobs/jobs.json` (dedupe index), `watch.lock`, `photos/<profile>.json` and `photos/incoming/` (Photos album feed) |
 | `LONGFORM_LOG_DIR` | `~/Library/Logs/longform-pipeline` | `<id>.session.json`, `<id>.session.err`, launchd stdout/stderr |
 
 ## Job directory layout after `staged`
@@ -103,6 +103,13 @@ Details:
   reloads `job.json`; if the state did not advance it stops that job for the
   pass and logs it. A non-zero exit stops the job for the pass; nothing is
   marked failed by the watcher (the stage command owns that decision).
+- After a profile's inbox stage, a profile with `photos.enabled` also gets
+  one Photos album pass (the same pass as `longform photos-watch --once`,
+  below). Its errors, such as osxphotos missing or no Full Disk Access, are
+  logged as `watch: photos <profile>: <error>` and never stop the inbox or the
+  job steps; a pass that saw recordings logs its counts. launchd's
+  `WatchPaths` only covers the inbox folders, so album recordings are picked
+  up on the 10-minute `StartInterval` tick (or any inbox event).
 - Jobs are processed oldest first (`created_at`, then id). "In flight"
   means another job of the same profile is in state `uploaded`.
 - Jobs in `failed`, `closed`, `detected` (staging crashed midway) or beyond
@@ -187,6 +194,128 @@ Stage logic, verbatim from the brief, then details:
 - Stage output is deterministic for a given inbox: candidates sorted by
   path, groups by recording time, source order inside a group by recording
   time then path.
+
+## `longform photos-watch`
+
+```
+longform photos-watch --profile <name> [--once] [--interval 5m] [--dry-run] [--osxphotos <path>]
+```
+
+The second feed, run on its own: the phone adds a recording to the profile's
+Apple Photos album (`photos.album`), iCloud Photos syncs the bytes, and this
+command lists the album with `osxphotos` and stages every recording whose
+original is on this Mac. `watch` runs the same pass for every profile with
+`photos.enabled`, so launchd needs nothing extra; this command is for checking
+a profile by hand (`--dry-run`), for one pass (`--once`), or for a foreground
+loop every `--interval` (default `5m`) until SIGINT/SIGTERM.
+
+One pass:
+
+- `osxphotos query --album <album> --only-movies --json --mute`
+  (`--library <photos.library>` when set). Only movies are considered; each is
+  keyed by its Photos UUID.
+- osxphotos is `--osxphotos`, else `photos.osxphotos` (an explicit path is
+  used as given), else the first that exists of `$LONGFORM_OSXPHOTOS`, `PATH`,
+  `~/.local/bin/osxphotos`, `/opt/homebrew/bin/osxphotos`,
+  `/usr/local/bin/osxphotos`.
+- A recording is ready when osxphotos reports a `path` and that file exists
+  (the database's `ismissing` flag lags a download, so the file is the
+  truth). A ready original is cloned (APFS `clonefile`, falling back to a
+  verified byte copy) to
+  `<DATA>/photos/incoming/<profile>/<uuid>/<original filename>`. All of a
+  pass's ready clones go to the stage logic in one batch, exactly like
+  `stage --file`: moved into `sources/`, hashed, probed, deduped against the
+  index, grouped and stitched by recording time for a stitch profile,
+  `staged`, notified. `extra.photos` on the job is a list of asset maps in
+  source order, one per recording in the job (a stitched job has several),
+  each with `uuid`, `album`, `original_path`, `original_filename`, `date`.
+  The Photos library is only read, never changed.
+- Not ready: with `photos.download_missing` the pass first runs
+  `osxphotos export <incoming>/<profile>/<uuid> --uuid <uuid> --download-missing --use-photokit --skip-edited --no-progress`
+  (needs Photos access for the calling process). Still not ready, the asset
+  stays `waiting` and, the first time only, `notify` fires event `waiting`
+  with `Waiting for <file> (<size>) to finish syncing from iCloud Photos to this Mac`.
+- Stitch profiles: while any album recording is still `waiting`, the pass
+  stages nothing (mirroring the inbox's deferral while files are still
+  arriving), so a class's clips are grouped into one job once all of them
+  are on this Mac. The deferral shows as a `deferred` count in the `watch`
+  and `photos-watch` summary lines.
+- A clone failure leaves the asset `waiting` for the next pass.
+- A per-file rejection by stage (not a video, unreadable video, hash error,
+  stage group failed) marks that asset `failed` at once with stage's reason
+  in `note`, keeps its clone under `incoming/` for inspection, and fires one
+  `failed` notification: `Could not stage <file> from the Photos album: <reason>`.
+- A stage error that stops the whole batch (index unreadable, etc.) is
+  retried: the assets stay `waiting` with note `stage attempt n/3: <err>`, and
+  only the third failed attempt marks them `failed` (one notification each).
+- Failed assets are never retried automatically; delete the asset's entry
+  from the state file to retry.
+- Only a true duplicate, whose hash is already in the index, is treated as
+  done: the asset is `fed` with no `job_id`, a note, and the clone removed.
+- A `fed` asset is never fed again, even if it stays in the album; removing
+  it from the album changes nothing.
+
+State, written atomically after every pass: `<DATA>/photos/<profile>.json`:
+
+```json
+{
+  "schema_version": "1",
+  "album": "EVC",
+  "assets": {
+    "<uuid>": {
+      "uuid": "<uuid>", "original_filename": "IMG_0420.MOV", "size_bytes": 3400000000,
+      "status": "waiting | fed | failed",
+      "first_seen": "<RFC3339>", "last_seen": "<RFC3339>", "fed_at": "<RFC3339>",
+      "job_id": "<id>", "incoming": "<path>", "note": "<text>", "notified": true, "attempts": 0
+    }
+  }
+}
+```
+
+`--dry-run` lists the album next to the feed state, `UUID FILE SIZE ORIGINAL
+FEED JOB` on stdout (`ORIGINAL`: `on disk`, `waiting`, `not in iCloud yet`;
+`FEED`: `new` or the recorded status), with a summary line on stderr. It takes
+no lock and stages, downloads, notifies and writes nothing; the setup wizard
+runs it after installing launchd as the access check. Remember that macOS
+attributes a terminal-run command's Full Disk Access to the terminal app,
+while the LaunchAgent's run uses the `longform` binary's own grant.
+
+Exit codes: `0` pass done (or the loop stopped by a signal), also when single
+assets failed, since those are recorded in the state; `64` bad flags or no
+`--profile`; `65` profile missing or invalid, or it has no album feed
+(`photos.enabled` false or `photos.album` empty); `69` osxphotos not found or
+it cannot read the Photos library (grant Full Disk Access to the process that
+runs it), in loop mode too, with osxphotos' own crash log written to
+`osxphotos_crash.log` under the log dir (`~/Library/Logs/longform-pipeline`,
+or `LONGFORM_LOG_DIR`); `70` any other failure with `--once` or
+`--dry-run` (without `--once` it is logged and retried next interval); `75`
+the `watch` lock is held (a `watch` pass is running). Progress goes to stderr.
+
+## `longform shortcut`
+
+```
+longform shortcut --profile <name> [--brand <display>] [--kind send|mark] [--album <name>] [--open]
+```
+
+Builds and signs the iPhone Share-sheet shortcut for one profile and prints
+the signed file's path on stdout. `--kind` picks which:
+
+| `--kind` | Shortcut name | What it does on the phone |
+|---|---|---|
+| `send` (default) | `Send to <Brand> inbox` | saves the shared video into `iCloud Drive/Shortcuts/longform-inbox/<profile>/` (the inbox feed) |
+| `mark` | `Mark for <Brand>` | adds the shared video to the Photos album `--album` (the album feed; nothing is copied) |
+
+- `--brand` defaults to the profile's `brand.display`, else the profile name.
+- `--album` is used only with `--kind mark` and defaults to the profile's
+  `photos.album`; when both are empty the command exits `64`.
+- Output: `<CONFIG>/shortcuts/<Name>.shortcut` (signed), with the unsigned
+  plist beside it as `<Name>.unsigned.shortcut`.
+- `--open` hands the signed file to the Shortcuts app, which shows an Add
+  dialog; one click adds it and iCloud syncs it to the phone.
+- Exit `0` ok, `64` bad flags, an unknown `--kind`, or `mark` without an
+  album, `70` when building or signing fails (the unsigned file's path is
+  printed on stderr). The recipe for building either by hand is
+  `docs/shortcut-recipe.md`.
 
 ## `longform launch-session`
 
