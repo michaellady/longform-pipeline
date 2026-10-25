@@ -55,7 +55,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # A shallow checkout peels annotated tags to their commit, so the notes
+      # step would read the commit message instead of the tag's annotation.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/download-artifact@v4
         with:
@@ -75,7 +80,12 @@ jobs:
         id: notes
         run: |
           tag="${{ github.ref_name }}"
-          summary="$(git tag -l --format='%(contents:body)' "$tag" | sed '/^-----BEGIN PGP SIGNATURE-----/,$d')"
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag" >/dev/null 2>&1 || true
+          summary=""
+          # Only an annotated tag carries a body; a lightweight tag falls back.
+          if [ "$(git cat-file -t "$tag" 2>/dev/null)" = "tag" ]; then
+            summary="$(git for-each-ref --format='%(contents:body)' "refs/tags/$tag" | sed '/^-----BEGIN PGP SIGNATURE-----/,$d')"
+          fi
           if [ -z "$(printf '%s' "$summary" | tr -d '[:space:]')" ]; then
             summary="This release updates the longform-pipeline tool that turns one long-form phone recording into scheduled clips, a full-length upload, and static posts after a single approval. Install or update it with \`make install\` or the tarball below; nothing changes in your brand profiles or scheduled posts unless the notes under Details say so."
           fi
