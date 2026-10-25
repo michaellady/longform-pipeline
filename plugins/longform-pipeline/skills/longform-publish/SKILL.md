@@ -240,8 +240,9 @@ three rounds, put the unresolved finding in `decisions[]` and hold the affected 
 1. Existing schedule: write `<jobdir>/review/existing.json` as an array of
    `{platform, account_id, publish_at}`. Source, in order of preference:
    the `opusclip_list_scheduled_posts` MCP tool when the OpusClip MCP is connected
-   (the binary has no schedule-list command: OpusClip exposes no listing endpoint to
-   the REST key); else `longform manifest schedule-ids` across recent jobs
+   (the binary has no schedule-list command: OpusClip documents no listing endpoint
+   for the REST key, and its undocumented `GET /publish-schedules?q=byPage` pages
+   unpredictably); else `longform manifest schedule-ids` across recent jobs
    (`longform status --json`); else an empty array `[]`.
 2. Write the cells you intend to post (every `post` clip cell plus the full-video
    cells) to `<jobdir>/review/cells.json` with `publish_at: ""`.
@@ -307,16 +308,32 @@ Steps, in order, reading every exit code:
    `{"image": {...}}` assets, the video asset shape is unconfirmed, so never assume
    `{type: "video"}`. Statics are images and PDFs; if a format needs a video asset,
    stop and surface it as a decision. Record each response via
-   `longform manifest append-post --job <jobdir>` with `"transport":"buffer"`.
+   `longform manifest append-post --job <jobdir>`, one JSON line per post:
+   `{"cell": <the static's cell from schedule.json>, "response": <the create_post reply verbatim>, "transport": "buffer", "post_id": "<the Buffer post id from that reply>"}`.
+   `post_id` is required: the binary does not know Buffer's reply shape, so you name
+   the id; without it the seal step reports the cell as missing.
 7. Full video to YouTube: the native OpusClip cell (already scheduled in step 5 as an
    ordinary clip) is the default. Only if `profile.extra.youtube_native_chapters` is
    `false` (set by the ticket 0 probe: the native post cannot carry chapters or a custom
    thumbnail), instead run
    `longform yt-upload --file <jobdir>/delivery.mp4 --title "<title>" --description "<description>" --chapters-file <jobdir>/review/chapters.txt --thumbnail <chosen thumb> --privacy private --publish-at <publish_at>`
    and drop the native YouTube full-video cell before step 5.
-8. `longform notify --job <jobdir> --event scheduled --message "<n> cells scheduled, full video <publish_at>"`.
-   The binary moves state to `scheduled`; the next watch tick verifies every
-   `scheduleId` and moves to `monitored`.
+8. `longform manifest seal --job <jobdir>` checks that every cell in
+   `review/schedule.json` has a recorded post in `manifest.json` (a `scheduleId` for
+   OpusClip cells, the Buffer `post_id` for statics), records the clips left in the
+   backlog as `held`, and moves the job `approved -> scheduled`.
+   - exit 0: continue (also when the job was already sealed).
+   - exit 65: stdout lists the cells with no post, one JSON object per line
+     (`clip_id`, `platform`, `label`, `reason`). Those cells were not posted: fix them
+     and re-run step 5 (OpusClip) or step 6 (Buffer) for exactly those cells, then seal
+     again. Pass `--allow-missing` only if the user decided to skip them; the skipped
+     cells are recorded under `job.extra.seal.missing`.
+   - any other exit: stop and report.
+9. `longform notify --job <jobdir> --event scheduled --message "<n> cells scheduled, full video <publish_at>"`.
+   This only notifies; the state already moved in step 8. On its next pass the
+   watcher runs `longform monitor`, which reads every OpusClip `scheduleId` back
+   from OpusClip and moves the job to `monitored`; once the backlog window
+   (`profile.backlog_days`) is over and no held clip remains, it closes the job.
 
 Print the manifest summary: cells scheduled per platform, first and last `publish_at`,
 held count, anything the gate rewrote.
@@ -325,6 +342,12 @@ held count, anything the gate rewrote.
 
 ## Edge cases
 
+- **Approval phase stopped before the seal step** (the job stays `approved`; the
+  watcher logs "approved but not sealed" every pass and never finishes it): resume,
+  do not restart. Run `longform manifest seal --job <jobdir>` first; exit 65 lists
+  exactly the cells that have no post yet. Schedule only those (step 5 with a cells
+  file holding just them, or step 6), append their lines, and seal again. Re-running
+  step 5 on the whole `schedule.json` would schedule the posted cells a second time.
 - **Re-run of the draft phase on a `drafted` job**: exit immediately; the user must
   `reject` first or edit `draft.json` by hand and run `longform brief render` again.
 - **Fewer candidates than slots**: fill what you can; never lower the score floor below

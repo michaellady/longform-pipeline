@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/michaellady/longform-pipeline/internal/model"
 )
 
 const opusResp = `{"data":{"scheduleId":"1779159097402OmCL-FACEBOOK_PAGE","postId":"p1","hasConflict":false,"publishAt":"2026-05-19T16:00:00.000Z"}}`
@@ -169,5 +171,71 @@ func TestAppendScheduleLines_FallbackAndMain(t *testing.T) {
 		if strings.Contains(e.Name(), ".tmp-") {
 			t.Errorf("temp file left: %s", e.Name())
 		}
+	}
+}
+
+// TestAppendLineIDsTransportAndProject: an explicit post_id (a Buffer line)
+// wins, `opus schedule`'s top-level schedule_id is a fallback, the cell's
+// project id is kept, and a failed line records no id.
+func TestAppendLineIDsTransportAndProject(t *testing.T) {
+	m := &Manifest{SchemaVersion: SchemaVersion, Clips: []Clip{}}
+	lines := `{"cell":{"kind":"static","clip_id":"s1","platform":"instagram","label":"static s1 (quote)"},"response":{"post":{"id":"b-77"}},"transport":"buffer","post_id":"b-77"}
+{"cell":{"kind":"static","clip_id":"s1","platform":"facebook","label":"static s1 (quote)"},"response":{"ok":true},"transport":"buffer"}
+{"cell":{"kind":"clip","clip_id":"c1","project_id":"P9","platform":"youtube","label":"clip 1"},"schedule_id":"sched-top","response":{"weird":true}}
+{"cell":{"kind":"clip","clip_id":"c1","project_id":"P9","platform":"instagram","label":"clip 1"},"schedule_id":"ignored","error":"HTTP 400"}`
+	if n, err := appendLines(m, strings.NewReader(lines)); err != nil || n != 4 {
+		t.Fatalf("append: %d %v", n, err)
+	}
+	s1, c1 := m.Find("s1").ScheduledPosts, m.Find("c1").ScheduledPosts
+	if s1[0].ScheduleID != "b-77" || s1[0].Transport != TransportBuffer || s1[0].IsOpusClip() {
+		t.Errorf("buffer post = %+v", s1[0])
+	}
+	if s1[1].ScheduleID != "" {
+		t.Errorf("a Buffer line without post_id must not invent an id: %+v", s1[1])
+	}
+	if c1[0].ScheduleID != "sched-top" || c1[0].ProjectID != "P9" || !c1[0].IsOpusClip() {
+		t.Errorf("opus post = %+v", c1[0])
+	}
+	if c1[1].ScheduleID != "" || c1[1].Error == "" {
+		t.Errorf("failed post = %+v", c1[1])
+	}
+}
+
+// TestExpireDaysDefaultsToProfile: without --days, expire reads the job's
+// profile backlog_days; --days 0 is accepted; --days is required without --job.
+func TestExpireDaysDefaultsToProfile(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LONGFORM_DATA_DIR", filepath.Join(root, "data"))
+	t.Setenv("LONGFORM_CONFIG_DIR", filepath.Join(root, "config"))
+	created := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	j, err := model.NewJob("evc", strings.Repeat("e", 64), nil, created)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(model.ProfilesDir(), 0o755)
+	os.WriteFile(model.ProfilePath("evc"), []byte(`{"name":"evc","inbox":"/tmp/x","orientation":"portrait","backlog_days":10}`), 0o644)
+	dir := j.Dir()
+	var stdout, stderr bytes.Buffer
+	Main([]string{"init", "--job", dir}, nil, &stdout, &stderr)
+	Main([]string{"ensure-clip", "--job", dir, "--clip-id", "h1", "--status", "held"}, nil, &stdout, &stderr)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Main([]string{"expire", "--job", dir, "--now", "2026-10-10T00:00:00Z"}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "older than 10 days (1 still held)") {
+		t.Fatalf("day 9 should expire nothing under backlog_days 10: %s", stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Main([]string{"expire", "--job", dir, "--now", "2026-10-11T00:00:01Z"}, nil, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"h1"`) {
+		t.Fatalf("day 10 should expire h1: exit %d %s %s", code, stdout.String(), stderr.String())
+	}
+	if code := Main([]string{"expire", "--manifest", PathIn(dir)}, nil, &stdout, &stderr); code != 64 {
+		t.Fatalf("no --job and no --days: exit %d, want 64", code)
+	}
+	if code := Main([]string{"expire", "--manifest", PathIn(dir), "--days", "0"}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("--days 0: exit %d %s", code, stderr.String())
 	}
 }

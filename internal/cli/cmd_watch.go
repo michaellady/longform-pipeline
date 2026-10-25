@@ -15,7 +15,7 @@ import (
 )
 
 func init() {
-	Register(Command{Name: "watch", Short: "Stage inbox files into jobs and drive them through prepare, upload, wait", Run: runWatch})
+	Register(Command{Name: "watch", Short: "Stage inbox files into jobs and drive them through prepare, upload, wait; monitor, expire and close after approval", Run: runWatch})
 }
 
 func runWatch(args []string) int {

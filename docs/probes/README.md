@@ -34,3 +34,18 @@ Credits spent: 2 (two 60-second uploads, 1 credit per source minute).
   first live run (D26) at private/unlisted visibility.
 - **`opusclip_get_usage` / `opusclip_whoami` via MCP**: need the OAuth sign-in above.
 - **Buffer tags**: creating four tags is a Buffer dashboard step; `buffer-post-prep` reads ids from `tag-ids.local.json`.
+
+## 2026-10-25: reading a schedule back
+
+`2026-10-25-publish-schedules-read.json`. Question: can the REST key read a publish schedule
+back, so `longform monitor` can verify the scheduleIds a job recorded? Ten GETs from a throwaway
+Go probe (no credits), plus one read-only `opusclip_list_scheduled_posts` call through the
+claude.ai connector as a cross-check.
+
+| Probe | Result | Implication |
+|---|---|---|
+| `GET /api/publish-schedules/<id>` | 404 `Cannot GET /api/publish-schedules/<id>` (a route miss) | No read by id. |
+| `GET /api/publish-schedules?projectId=P` (and `?q=findByProjectId`, `?q=mine`, no query) | 400 `unsupported q parameter: '<q>'. Supported values: byPage, findByProjectAndClip` | Two undocumented list modes exist. |
+| `GET /api/publish-schedules?q=findByProjectAndClip&projectId=P&clipId=C` | 200 `{data: [{scheduleId, extUserId, extOrgId, platform, postDetail{title, custom, thumbnailUrl}, publishAt}]}`; `[]` for a clip never scheduled and for a clip whose posts all went out; without `clipId` the whole project (52 entries = the connector's 52 `scheduled` for that project; its 72 `posted` are absent) | The list holds pending schedules only. `monitor` reads it once per clip: listed = pending (verified); absent with the publish time ahead = missing (failure); absent after the publish time = not_pending (posted, failed or cancelled; REST cannot tell). |
+| `GET /api/publish-schedules?q=byPage` | 200 `{data: {data: [73 entries], meta: {page, nextPage, total: 73}}}`, including schedules from 2024 and February 2026 that are long past `publishAt` | Pending is not "will post": stale schedules that never fired stay listed, so `monitor` flags a pending schedule over an hour past its time as overdue. Paging is unclear (`nextPage` set while all 73 came back); not used. |
+

@@ -100,10 +100,13 @@ Each row: the feature, the command that proves it, the artifact to inspect, and 
 | 4 | Gates | `longform gate validate --profile evc --cells C` | exit code | 0 for a clean set; 65 with a named reason for an over-length title or a profane caption |
 | 6 | Schedule | `longform opus schedule --cells C` | stdout JSON lines; fake log | one line per cell with `response.data.scheduleId`; calls paced at 1 req/s; never a non-`Bearer test` auth value |
 | 6 | Manifest | `longform manifest init`, `manifest append-post --file R` | `manifest.json` | `scheduled_posts` has one entry per cell with the verbatim response and a `schedule_id` the fake issued |
+| 6 | Seal | `longform manifest seal --job <job>` | stdout verdict lines / result JSON; `job.json` | exit 65 lists every approved cell with no post and changes nothing; once all are posted: state `scheduled`, `extra.scheduled_at`, the draft's held clips in `manifest.json` as `held` |
+| 6 | Monitor | `longform watch --once` (or `longform monitor <job>`) | `manifest.json` `scheduled_posts[].check`; `job.json` `extra.monitor`; fake log `GET /publish-schedules?q=findByProjectAndClip` | state `monitored`; every post `check.status: pending` with the scheduler's entry in `check.response`; a dropped schedule gives exit 70 naming its id |
+| 6 | Backlog and close | `longform manifest expire --job <job> --now T`, `longform close --job <job> --now T` | `manifest.json` clip statuses; `job.json` | before `scheduled_at + backlog_days`, or while a clip is `held`, close exits 0 and the job stays `monitored`; after expiry it is `closed` with `extra.closed_at` |
 | 0 | Wizard dry run | `/longform-pipeline:longform-setup` with `OPUSCLIP_API_URL` = fake | `job.json` | job reaches `clipped` on the bundled fixture |
 | 9 | Fake fidelity | `go test ./internal/fakeopus/` | test output | upload, project, clip, editing-script, re-render, schedule, 401 and 429 paths all pass |
 
-Not covered by the harness (see docs/verification.md "Known gaps"): HDR tonemapping, vidstab, BJJ stitching, real whisper output, Buffer statics, Slack and macOS notifications, YouTube native posting, the `monitored` tick.
+Not covered by the harness (see docs/verification.md "Known gaps"): HDR tonemapping, vidstab, BJJ stitching, real whisper output, Buffer statics, Slack and macOS notifications, YouTube native posting, and, for the `monitored` check, anything live: whether a real post went out is not visible to the REST key (check it with `opusclip_list_scheduled_posts`).
 
 ## Evidence
 

@@ -138,7 +138,7 @@ Every `longform` subcommand the skills and wizard call. Exit codes follow sysexi
 |---|---|---|
 | `longform version` | release workflow, you | print the build version |
 | `longform status [--json]` | wizard stage 12, skill, you | list jobs and states |
-| `longform watch --once` | launchd | scan every profile inbox and Photos album, advance every job one step |
+| `longform watch --once` | launchd | scan every profile inbox and Photos album, advance every job as far as it can go (prepare, upload, wait; after approval monitor, expire, close) |
 | `longform photos-watch --profile <p> [--once] [--dry-run]` | wizard stage 11 (`--dry-run`), you | list the profile's Photos album and feed ready recordings into jobs; `69` = osxphotos missing or no Full Disk Access |
 | `longform shortcut --profile <p> [--kind send\|mark] [--album <name>] [--open]` | wizard stage 9 | build and sign the "Send to <Brand> inbox" or "Mark for <Brand>" shortcut; `--open` hands it to the Shortcuts app |
 | `longform stage --profile <p> --file <mp4>` | wizard dry run | create a job from one file without the watcher |
@@ -154,9 +154,12 @@ Every `longform` subcommand the skills and wizard call. Exit codes follow sysexi
 | `longform opus export` | you | export URLs for clips |
 | `longform manifest init --job <dir>` | skill, approve | create `manifest.json` |
 | `longform manifest ensure-clip --job <dir>` | skill, approve | add a clip entry if missing |
-| `longform manifest append-post --job <dir>` | skill, approve | append one verbatim API response (stdin) |
-| `longform manifest expire --job <dir>` | watcher | drop held clips past `backlog_days` |
-| `longform notify --job <dir> --event <state> --message "..."` | skill | macOS notification plus Slack when configured |
+| `longform manifest append-post --job <dir>` | skill, approve | append one verbatim API response (stdin); Buffer lines carry `"transport":"buffer","post_id":"..."` |
+| `longform manifest seal --job <dir> [--allow-missing]` | skill, approve (last step) | check every approved cell has a recorded post, record the held clips, state `scheduled`; exit 65 lists the cells with no post |
+| `longform monitor <dir>` | watcher | read every OpusClip `scheduleId` back from OpusClip, record each in `manifest.json`, state `monitored`; exit 70 names the ids that did not resolve |
+| `longform manifest expire --job <dir>` | watcher | mark held clips older than the profile's `backlog_days` as expired |
+| `longform close <dir>` | watcher | state `closed` once `backlog_days` have passed since scheduling and nothing is held; otherwise leaves the job `monitored` |
+| `longform notify --job <dir> --event <state> --message "..."` | skill | macOS notification plus Slack when configured; never moves state |
 | `longform yt-upload --file ... --title ... --description ... --chapters-file ... --thumbnail ... --privacy ... --publish-at ...` | skill, approve (fallback only) | YouTube Data API upload when the native OpusClip post cannot carry chapters or a custom thumbnail |
 
 ## Uninstall

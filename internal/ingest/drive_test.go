@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -193,5 +194,115 @@ func TestLaunchSessionDetachedAndOnce(t *testing.T) {
 	forced, err := LaunchSession(re, LaunchOptions{Force: true})
 	if err != nil || !forced {
 		t.Fatalf("forced launch: launched=%v err=%v", forced, err)
+	}
+}
+
+// jobAt creates a job advanced to state, with the editorial session already
+// launched so the driver's only work is the post-approval hops.
+func jobAt(t *testing.T, profile, hash string, at time.Time, state model.State) *model.Job {
+	t.Helper()
+	j := stagedJob(t, profile, hash, at)
+	for _, s := range model.Order {
+		if !j.AtLeast(s) {
+			if err := j.Advance(s, "test", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if s == state {
+			break
+		}
+	}
+	j.Extra = map[string]any{SessionLaunchedKey: at.UTC().Format(time.RFC3339)}
+	if err := j.Save(); err != nil {
+		t.Fatal(err)
+	}
+	return j
+}
+
+func TestDriveMonitorsScheduledThenClosesAfterBacklog(t *testing.T) {
+	setupEnv(t)
+	calls, d := useHelper(t)
+	t.Setenv("LONGFORM_TEST_MONITOR_EXIT", "")
+	t.Setenv("LONGFORM_TEST_BACKLOG_OVER", "")
+	j := jobAt(t, "evc", strings.Repeat("s", 64), time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC), model.StateScheduled)
+
+	jobs, _ := model.ListJobs()
+	d.Drive(jobs)
+	assertCalls(t, readCalls(t, calls), "monitor "+j.ID, "manifest expire "+j.ID, "close "+j.ID)
+	re, _ := model.LoadJob(j.Dir())
+	if re.State != model.StateMonitored {
+		t.Fatalf("after pass 1: state %s, want monitored (close waits out the backlog)", re.State)
+	}
+	for _, name := range []string{"monitor", "expire", "close"} {
+		b, err := os.ReadFile(j.Path(filepath.Join("logs", name+".log")))
+		if err != nil || !strings.Contains(string(b), "=== exit 0") {
+			t.Errorf("log %s.log: %v %q", name, err, b)
+		}
+	}
+	if b, _ := os.ReadFile(j.Path(filepath.Join("logs", "expire.log"))); !strings.Contains(string(b), "longform manifest expire --job "+j.Dir()) {
+		t.Errorf("expire.log header should carry the full command line: %q", b)
+	}
+
+	// Backlog still running: expire and close again, nothing else.
+	os.Remove(calls)
+	jobs, _ = model.ListJobs()
+	d.Drive(jobs)
+	assertCalls(t, readCalls(t, calls), "manifest expire "+j.ID, "close "+j.ID)
+
+	// Backlog over: close advances; a closed job is never touched again.
+	t.Setenv("LONGFORM_TEST_BACKLOG_OVER", "1")
+	os.Remove(calls)
+	jobs, _ = model.ListJobs()
+	d.Drive(jobs)
+	assertCalls(t, readCalls(t, calls), "manifest expire "+j.ID, "close "+j.ID)
+	if re, _ := model.LoadJob(j.Dir()); re.State != model.StateClosed {
+		t.Fatalf("after backlog: state %s, want closed", re.State)
+	}
+	os.Remove(calls)
+	jobs, _ = model.ListJobs()
+	d.Drive(jobs)
+	if got := readCalls(t, calls); len(got) != 0 {
+		t.Fatalf("closed job was driven: %q", got)
+	}
+}
+
+func TestDriveMonitorFailureStopsTheJob(t *testing.T) {
+	setupEnv(t)
+	calls, d := useHelper(t)
+	t.Setenv("LONGFORM_TEST_MONITOR_EXIT", "70")
+	j := jobAt(t, "evc", strings.Repeat("m", 64), time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC), model.StateScheduled)
+	jobs, _ := model.ListJobs()
+	d.Drive(jobs)
+	assertCalls(t, readCalls(t, calls), "monitor "+j.ID)
+	if re, _ := model.LoadJob(j.Dir()); re.State != model.StateScheduled {
+		t.Fatalf("state %s, want scheduled", re.State)
+	}
+}
+
+func TestDriveLeavesApprovedJobAndSaysWhy(t *testing.T) {
+	setupEnv(t)
+	calls, d := useHelper(t)
+	var logs []string
+	d.Logf = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
+	j := jobAt(t, "evc", strings.Repeat("p", 64), time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC), model.StateApproved)
+	for pass := 1; pass <= 2; pass++ {
+		logs = nil
+		jobs, _ := model.ListJobs()
+		d.Drive(jobs)
+		if got := readCalls(t, calls); len(got) != 0 {
+			t.Fatalf("pass %d: approved job was driven: %q", pass, got)
+		}
+		n := 0
+		for _, l := range logs {
+			if strings.Contains(l, j.ID) && strings.Contains(l, "approved but not sealed; re-run the approval phase") {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Fatalf("pass %d: want the approved-not-sealed line once, got %d in %q", pass, n, logs)
+		}
+	}
+	if re, _ := model.LoadJob(j.Dir()); re.State != model.StateApproved {
+		t.Fatalf("state %s, want approved", re.State)
 	}
 }

@@ -30,6 +30,7 @@ Client behaviour:
 | The describe transcript (`text`) is one string with literal `__silence` tokens and no timestamps. | `analysis/opus-transcripts.json` has `transcript` verbatim and `transcript_clean` with the tokens dropped. Whisper stays the primary transcript. |
 | `uriForExport` / `uriForPreview` are signed GCS URLs that expire. | `clips.json` carries `fetched_at` and `uris_expire: true`; `longform opus export` re-fetches fresh URIs at approval time. Never put them in a manifest as durable. |
 | There is **no REST usage endpoint**: `GET /usage`, `/credits`, `/me`, `/user` all 404. `POST /upload-links` returns `useAmount`/`totalAmount` = upload **storage** bytes (100 GiB cap), not credits. | `longform opus usage` reports the watcher's own estimate from `job.json` (`extra.opusclip_projects[].credits_estimate`, summed); `--storage` additionally reads the storage quota (creates one unused upload link). The true balance is only in the dashboard or the OAuth MCP `opusclip_get_usage`. |
+| (Probed 2026-10-25, `docs/probes/2026-10-25-publish-schedules-read.json`.) No schedule read is documented and `GET /publish-schedules/{id}` is a route miss (404 `Cannot GET`), but the 400 for an unknown `q` names two list modes: `q=findByProjectAndClip&projectId=P[&clipId=C]` → `{data: [{scheduleId, extUserId, extOrgId, platform, postDetail{title, custom, thumbnailUrl}, publishAt}]}` and `q=byPage` → `{data: {data, meta{page, nextPage, total}}}`. Both list only schedules still pending (status `scheduled` in the connector, even months past `publishAt`); a schedule that posted is gone, and no status, post URL or failure reason is returned. | `Client.ClipSchedules(ctx, project, clip)` reads the per-clip list (30 req/min bucket, not paced); `longform monitor` uses it once per clip. `byPage` is not used: one call returned all 73 entries while `nextPage` was set, so its paging is unclear. |
 | Facebook and LinkedIn share one `postAccountId` across sub-accounts. | `ScheduleRequest.SubAccountID` is sent whenever present; `opus schedule --profile` resolves `sub_accounts[platform]` too. |
 | The only brand template (`665fefb18ce49592eaeff8a0`) already has `screenOverlays: []`. | `StripOverlay` describes the clip first and returns `ErrNoOverlay` (no re-render) unless the payload shows an overlay (`screenOverlays` non-empty, `screenOverlay`/`screenOverlayFileId` non-null, or `enableScreenOverlay: true` anywhere in `renderPref`/`editingScript`). `--force` overrides. |
 
@@ -78,6 +79,10 @@ Ceiling reached (or SIGINT) → exit 75 and the state is unchanged; nothing part
 | `strip-overlay --project P --clip C [--wait] [--force]` | describe + re-render | re-render response, or `{skipped:true}` |
 | `schedule --cells cells.json [--profile NAME] [--dry-run]` | `POST /publish-schedules` per cell at 1 req/s | one JSON line per cell: `{cell, schedule_id, response, error, status}` |
 | `unschedule <scheduleId>` | `DELETE /publish-schedules/{id}` | verbatim JSON |
+
+`longform monitor <jobdir>` (see `cli-contract.md`) is the only caller of
+`GET /publish-schedules?q=findByProjectAndClip`; there is no `opus` subcommand
+for it.
 
 Cells: `[{project_id, clip_id, platform, account_id, sub_account_id?, title, description?, privacy?, media_type?, publish_at}]`. `publish_at` is any RFC 3339 time and is normalised to UTC `…Z`. With `--profile`, an empty `account_id` resolves through `profile.opusclip.accounts[platform]` (and `sub_accounts[platform]`). A failing cell (local validation or API error) is reported on its line and the run continues; exit is 65 if any cell failed, else 0.
 
