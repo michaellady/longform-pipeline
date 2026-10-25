@@ -187,16 +187,16 @@ terminal CLI's `~/.claude`. Plugins, MCP entries and sign-ins live per config
 directory, so the whole pipeline must agree on one:
 
 1. Install the plugin from the app's Code tab shell (so it lands in the app's config).
-2. Run the wizard from that same shell. It registers the OpusClip MCP there and
+2. Run the wizard from that same shell. It checks for the OpusClip connector and
    writes `CLAUDE_CONFIG_DIR` into the LaunchAgent, so the headless editorial
-   session that launchd starts uses the app's plugin, MCP and sign-in.
+   session that launchd starts uses the app's plugin, connector and sign-in.
 3. Connect OpusClip once as a claude.ai **connector** (`/mcp` in a session, or
    claude.ai → Settings → Connectors), then sign in on OpusClip's consent page.
    `claude mcp list` then shows `claude.ai OpusClip`. The connector follows your
    account rather than a config directory, so every session signed in as you sees
-   it, including the headless one launchd starts. The standalone HTTP server
-   (`https://mcp.opus.pro/mcp`) is only for CLI-only setups and is not needed
-   alongside the connector.
+   it, including the headless one launchd starts. The connector is the only
+   OpusClip MCP this plugin uses; the watcher's own uploads go through the REST
+   API with the key from the wizard, because launchd cannot complete OAuth.
 
 To move the pipeline to the terminal CLI instead, re-run the wizard from a terminal
 where `CLAUDE_CONFIG_DIR` is unset; `make launchd-install` re-renders the agent.

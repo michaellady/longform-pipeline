@@ -412,15 +412,9 @@ if command -v claude >/dev/null 2>&1 && claude mcp list 2>/dev/null | grep -qi '
   printf '  %s✓ found%s the claude.ai OpusClip connector in this config\n' "$GREEN" "$RESET"
 else
   step "Add it once: in a Claude session run '/mcp' and connect OpusClip, or add OpusClip under claude.ai → Settings → Connectors, then sign in on OpusClip's consent page."
-  if confirm "Also register the standalone HTTP server (https://mcp.opus.pro/mcp) for CLI-only use?"; then
-    if command -v claude >/dev/null 2>&1 && claude mcp add --transport http opusclip https://mcp.opus.pro/mcp --scope user >/dev/null 2>&1; then
-      printf '  %s✓ added%s opusclip HTTP server (user scope); authorize it with /mcp\n' "$GREEN" "$RESET"
-    else
-      SKIPPED+=("claude mcp add --transport http opusclip https://mcp.opus.pro/mcp --scope user")
-      warn "could not register the HTTP server; add it later"
-    fi
-  fi
+  SKIPPED+=("connect the claude.ai OpusClip connector (/mcp or claude.ai → Settings → Connectors)")
 fi
+note "The launchd watcher never uses the connector: its uploads go through the REST API with the key from stage 3."
 pause "OpusClip connected (or skipping for now)?"
 
 # ── 5 ──────────────────────────────────────────────────────────────────────

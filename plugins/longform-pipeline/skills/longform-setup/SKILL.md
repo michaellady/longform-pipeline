@@ -42,7 +42,7 @@ Subcommands you may run directly (non-interactive):
 | 1 | Profile name, brand display/site, orientation, stitching | memory only |
 | 2 | Inbox folder | `~/Library/Mobile Documents/com~apple~CloudDocs/longform-inbox/<profile>/` |
 | 3 | `OPUSCLIP_API_KEY` (hidden) | `~/.config/longform-pipeline/env` (0600) |
-| 4 | `claude mcp add --transport http opusclip https://mcp.opus.pro/mcp --scope user` in the user's normal shell (it writes to the config `CLAUDE_CONFIG_DIR` points at), then OAuth via `/mcp` in an interactive `claude` session | Claude user config |
+| 4 | Checks `claude mcp list` for the claude.ai OpusClip **connector** (the only OpusClip MCP this plugin uses); if absent, tells the user to connect it once via `/mcp` in a session or claude.ai → Settings → Connectors. The watcher never uses it: launchd uploads go through the REST API with the stage 3 key. | nothing written |
 | 5 | Human step: connect TikTok, X and anything else in the OpusClip dashboard (neither was connected when probed; the skill skips platforms with no account id) | nothing |
 | 6 | OpusClip accounts via `longform opus accounts`, template id (default `665fefb18ce49592eaeff8a0`, the only brand template: portrait, captions, no overlay), curation model | memory |
 | 7 | Buffer tags `format:video-quote`, `format:video-carousel`, `format:video-still`, `format:video-frame-carousel` and channel ids | memory |
