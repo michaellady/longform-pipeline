@@ -207,7 +207,7 @@ CONFIG_ROOT="${LONGFORM_CONFIG_DIR:-$HOME/.config/longform-pipeline}"
 PROFILES_DIR="$CONFIG_ROOT/profiles"
 ENV_FILE="$CONFIG_ROOT/env"
 LOG_DIR="${LONGFORM_LOG_DIR:-$HOME/Library/Logs/longform-pipeline}"
-ICLOUD_ROOT="$HOME/Library/Mobile Documents/com~apple~CloudDocs/longform-inbox"
+ICLOUD_ROOT="$HOME/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/longform-inbox"
 AGENT_LABEL="com.$(id -un).longform-watch"
 AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -489,8 +489,19 @@ fi
 
 # ── 9 ──────────────────────────────────────────────────────────────────────
 stage "iPhone Shortcut"
-print_shortcut_recipe
-pause "Shortcut built (or you'll do it later)?"
+say "The Shortcut can be built here: the Mac's Shortcuts app imports it after one click"
+say "and iCloud syncs it to the phone. Building it by hand on the phone also works."
+if BIN=$(find_bin) && command -v shortcuts >/dev/null 2>&1; then
+  if "$BIN" shortcut --profile "$PROFILE" --brand "$BRAND_DISPLAY" --open; then
+    step "Click 'Add Shortcut' in the Shortcuts window that just opened. It appears on the iPhone within a minute (Shortcuts → iCloud sync must be on)."
+  else
+    warn "could not build the shortcut here; build it by hand instead:"
+    print_shortcut_recipe
+  fi
+else
+  print_shortcut_recipe
+fi
+pause "Shortcut added (or you'll do it later)?"
 
 # ── 10 ─────────────────────────────────────────────────────────────────────
 stage "Write the profile"
@@ -527,7 +538,7 @@ mkdir -p "$TEMPLATES_DIR"
 # shellcheck disable=SC2154,SC2088
 jq -n \
   --arg name "$PROFILE" --arg display "$BRAND_DISPLAY" --arg site "$BRAND_SITE" \
-  --arg inbox "~/Library/Mobile Documents/com~apple~CloudDocs/longform-inbox/$PROFILE" \
+  --arg inbox "~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/longform-inbox/$PROFILE" \
   --arg orientation "$ORIENTATION" --argjson stitch "$STITCH" --argjson stitch_win "${STITCH_WINDOW:-90}" \
   --argjson stab "$STAB" --arg censor_mode "$CENSOR_MODE" --arg censor_extra "$CENSOR_EXTRA" \
   --arg whisper "$WHISPER_MODEL" \

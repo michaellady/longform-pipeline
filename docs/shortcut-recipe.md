@@ -5,7 +5,7 @@ saves the selected video(s) into the profile's iCloud Drive inbox, and the Mac's
 launchd watcher does the rest. Build it once on the iPhone (about two minutes).
 
 Replace `<profile>` below with the profile name (`evc`, `sandbox-bjj`, ...). The
-folder `iCloud Drive/longform-inbox/<profile>` is created by `/longform-pipeline:longform-setup`
+folder `iCloud Drive/Shortcuts/longform-inbox/<profile>` is created by `/longform-pipeline:longform-setup`
 stage 2; create it from Files if you build the Shortcut first.
 
 ## Steps
@@ -23,8 +23,8 @@ stage 2; create it from Files if you build the Shortcut first.
    - input: **Shortcut Input**
    - **Service**: iCloud Drive
    - **Ask Where to Save**: OFF (tap the action's expand arrow to see it)
-   - **Destination Path**: `longform-inbox/<profile>`
-     (type it; no leading slash, no trailing slash; Subpath stays empty)
+   - **Destination Path**: `longform-inbox/<profile>/` (the trailing slash makes it a folder; without it the last segment becomes the file name)
+     (type it; no leading slash; keep the trailing slash; Subpath stays empty)
    - **Overwrite If File Exists**: ON
 6. Add action **Show Notification** with the text `Sent to <profile> inbox`.
 7. Tap **Done**.
@@ -48,7 +48,7 @@ video is about 1.5 GB, so a Wi-Fi hop takes a few minutes each way.
 On the Mac, after a minute or two:
 
 ```bash
-ls ~/Library/Mobile\ Documents/com~apple~CloudDocs/longform-inbox/<profile>/
+ls ~/Library/Mobile\ Documents/iCloud~is~workflow~my~workflows/Documents/longform-inbox/<profile>/
 longform status
 tail -f ~/Library/Logs/longform-pipeline/watch.log
 ```
@@ -67,7 +67,17 @@ both ways is harmless.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Shortcut asks where to save every time | "Ask Where to Save" is ON | step 5 |
-| File saved to iCloud root | Destination Path empty or has a leading slash | type `longform-inbox/<profile>` |
+| File saved to iCloud root | Destination Path empty or has a leading slash | type `longform-inbox/<profile>/` with the trailing slash |
 | Shortcut missing from the Share sheet | Share Sheet Types does not include Media | step 3 |
 | File lands but no job | watcher not loaded, or still an iCloud placeholder | `make launchd-install`; wait for the 10-minute tick |
 | Job created twice | different file content (re-export changes bytes) | expected; the second is a new job |
+
+## Building it on the Mac instead
+
+The wizard (stage 9) and `longform shortcut --profile <profile> --open` build the
+same shortcut as a signed `.shortcut` file under
+`~/.config/longform-pipeline/shortcuts/` and open it in the Mac's Shortcuts app.
+Click **Add Shortcut** once; with Shortcuts' iCloud sync on, it appears on the
+iPhone within a minute, in the Share sheet under "Send to <brand> inbox".
+Signing uses the macOS `shortcuts sign` tool (macOS 12 or later), so the file
+imports on any of your devices. The steps above remain the fallback.
