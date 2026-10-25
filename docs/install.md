@@ -195,3 +195,15 @@ directory, so the whole pipeline must agree on one:
 
 To move the pipeline to the terminal CLI instead, re-run the wizard from a terminal
 where `CLAUDE_CONFIG_DIR` is unset; `make launchd-install` re-renders the agent.
+
+### The executable launchd runs
+
+LaunchAgents load no shell aliases and only the PATH written in the plist, so the
+wizard records the `claude` executable it found (`command -v claude`, else
+`~/.local/bin/claude`) as `LONGFORM_CLAUDE` in the agent, next to
+`CLAUDE_CONFIG_DIR`. A shell alias such as
+`alias claude-secondary='CLAUDE_CONFIG_DIR=~/.claude-secondary claude'` resolves to
+that same binary; only the config directory differs, so the primary profile is
+untouched. Run `/login` once in a session started the same way (the alias, or the
+app's own terminal, which already sets `CLAUDE_CONFIG_DIR`) and launchd sessions
+share that sign-in.

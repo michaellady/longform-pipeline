@@ -265,6 +265,17 @@ make_fixture() {
   printf '  %s✓ wrote%s %s\n' "$GREEN" "$RESET" "$out"
 }
 
+# find_claude prints the claude executable the LaunchAgent should run: the
+# one on this shell's PATH (an alias such as claude-secondary resolves to the
+# same binary), else the standard install location, else nothing.
+find_claude() {
+  local c
+  c=$(command -v claude 2>/dev/null || true)
+  [[ -n "$c" && -x "$c" ]] && { printf '%s' "$c"; return 0; }
+  [[ -x "$HOME/.local/bin/claude" ]] && { printf '%s' "$HOME/.local/bin/claude"; return 0; }
+  return 0
+}
+
 # render_plist writes the LaunchAgent plist from the template with one
 # WatchPaths entry per profile inbox.
 render_plist() {
@@ -284,12 +295,17 @@ render_plist() {
       -e "s|@@LOG@@|$LOG_DIR|g" \
       -e "s|@@ENV_FILE@@|$ENV_FILE|g" \
       "$PLIST_TMPL" \
-  | awk -v f="$tmp" -v cfg="${CLAUDE_CONFIG_DIR:-}" '
+  | awk -v f="$tmp" -v cfg="${CLAUDE_CONFIG_DIR:-}" -v claudebin="$(find_claude)" '
       $0 ~ /^[[:space:]]*@@WATCHPATHS@@[[:space:]]*$/ { while ((getline l < f) > 0) print l; close(f); next }
       $0 ~ /^[[:space:]]*@@CLAUDE_CONFIG@@[[:space:]]*$/ {
         # The headless editorial session must use the same Claude config the
         # wizard ran under (plugin, MCP entry and sign-in all live there).
         if (cfg != "") { print "    <key>CLAUDE_CONFIG_DIR</key>"; print "    <string>" cfg "</string>" }
+        next
+      }
+      $0 ~ /^[[:space:]]*@@CLAUDE_BIN@@[[:space:]]*$/ {
+        # launchd loads no shell aliases or user PATH, so name the executable.
+        if (claudebin != "") { print "    <key>LONGFORM_CLAUDE</key>"; print "    <string>" claudebin "</string>" }
         next
       }
       { print }' \
