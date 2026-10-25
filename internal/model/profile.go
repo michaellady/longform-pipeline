@@ -15,6 +15,7 @@ type Profile struct {
 	Name        string           `json:"name"`
 	Brand       Brand            `json:"brand"`
 	Inbox       string           `json:"inbox"`
+	Photos      PhotosConfig     `json:"photos"`
 	Orientation string           `json:"orientation"` // "portrait" | "landscape"
 	Stitch      StitchConfig     `json:"stitch"`
 	Stabilize   StabilizeConfig  `json:"stabilize"`
@@ -36,6 +37,23 @@ type Profile struct {
 type Brand struct {
 	Display string `json:"display"`
 	Site    string `json:"site"`
+}
+
+// PhotosConfig is the second feed: recordings the phone tags into an Apple
+// Photos album arrive through iCloud Photos, and the watcher clones each
+// original into a job once it exists on this Mac.
+type PhotosConfig struct {
+	Enabled bool   `json:"enabled"`
+	Album   string `json:"album"` // Photos album name the phone adds recordings to
+	// DownloadMissing asks Photos to fetch an original that iCloud has not
+	// downloaded yet (needs Photos access for the watcher). Off, the watcher
+	// waits for Photos' own "Download Originals to this Mac" to deliver it.
+	DownloadMissing bool `json:"download_missing"`
+	// Osxphotos is the executable path; empty = LONGFORM_OSXPHOTOS, PATH,
+	// ~/.local/bin, /opt/homebrew/bin.
+	Osxphotos string `json:"osxphotos,omitempty"`
+	// Library overrides the system Photos library path (osxphotos --library).
+	Library string `json:"library,omitempty"`
 }
 
 type StitchConfig struct {
@@ -197,6 +215,8 @@ func (p *Profile) applyDefaults() {
 	p.Statics.TemplatesDir = ExpandHome(p.Statics.TemplatesDir)
 	p.Copy.VoiceCorpus = ExpandHome(p.Copy.VoiceCorpus)
 	p.Transcribe.Model = ExpandHome(p.Transcribe.Model)
+	p.Photos.Osxphotos = ExpandHome(p.Photos.Osxphotos)
+	p.Photos.Library = ExpandHome(p.Photos.Library)
 }
 
 // Validate checks the fields the transport layer cannot run without.

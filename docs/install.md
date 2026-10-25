@@ -7,6 +7,7 @@ released.
 
 ```bash
 brew install jq ffmpeg whisper-cpp
+pipx install osxphotos   # or: brew install osxphotos (only for a Photos album feed)
 # optional: shellcheck (lint the wizard), go (build from source)
 ```
 
@@ -21,6 +22,22 @@ brew install jq ffmpeg whisper-cpp
   OpusClip MCP (interactive sessions).
 - An OpusClip plan with API access (Pro or Enterprise). The key goes into
   `~/.config/longform-pipeline/env` by the wizard, never into the repo or a profile.
+- For a Photos album feed (the one-tap "Mark for <Brand>" shortcut; see
+  `profile-schema.md`, `photos`):
+  - `osxphotos` (above). pipx puts it in `~/.local/bin`, which the LaunchAgent's
+    `PATH` includes; the wizard also records the path it found in the profile.
+  - **Full Disk Access for the binary launchd runs.** osxphotos reads the Photos
+    library database, which macOS guards. System Settings → Privacy & Security →
+    Full Disk Access → + → press Cmd-Shift-G, paste the `longform` path the wizard
+    prints (the LaunchAgent's `ProgramArguments`), Open, switch on. macOS ties the
+    grant to that file, so check it again after `make install` or a plugin update
+    replaces the binary. Run from a terminal, `longform photos-watch` uses that
+    terminal app's grant instead, so a check passing there does not prove the
+    LaunchAgent can read the library (its `watch.err.log` does).
+  - In Photos on the Mac: Settings → iCloud → **Download Originals to this Mac**,
+    so each recording's full file arrives without anyone opening Photos. The
+    watcher waits (and notifies once) until it has.
+  - The Mac awake, signed in, with iCloud Photos on. Nothing syncs while it sleeps.
 
 ## 2. Plugin
 
@@ -74,9 +91,15 @@ bash "$(claude plugin path longform-pipeline 2>/dev/null || echo plugins/longfor
 
 Twelve stages: profile and brand, inbox folder, OpusClip key, OpusClip MCP, connect
 TikTok and X in the OpusClip dashboard, OpusClip accounts, Buffer tags, Slack
-(optional), iPhone Shortcut (`docs/shortcut-recipe.md`), profile JSON
+(optional), iPhone Shortcuts (`docs/shortcut-recipe.md`), profile JSON
 (`docs/profile-schema.md`), launchd, dry run on a generated 30-second fixture.
 Re-running keeps existing values as defaults.
+
+The Shortcut stage first asks for the Photos album the phone tags recordings into
+(blank = iCloud Drive inbox only; `-` turns an existing album off). With an album it
+builds "Mark for <Brand>" as well as the "Send to <Brand> inbox" fallback, and after
+installing launchd it reads the album once (`longform photos-watch --dry-run`) and
+walks you through the Full Disk Access grant above.
 
 ## 5. Verify
 
@@ -86,8 +109,11 @@ launchctl print gui/$(id -u)/com.$(id -un).longform-watch | head
 tail ~/Library/Logs/longform-pipeline/watch.log
 ```
 
-Then record a real video, Share → the Shortcut, and watch `longform status` move
-from `staged` to `clipped`. The brief lands in `review/brief.md`, in Slack if
+Then record a real video, Share → "Mark for <Brand>" (or the inbox Shortcut), and
+watch `longform status` move from `staged` to `clipped`. For an album profile,
+`longform photos-watch --profile <p> --dry-run` lists what the watcher sees in the
+album, and `watch.err.log` shows `watch: photos <p>: ...` when launchd's own run
+cannot read it. The brief lands in `review/brief.md`, in Slack if
 configured, and as a macOS notification.
 
 ## Make targets
@@ -112,7 +138,9 @@ Every `longform` subcommand the skills and wizard call. Exit codes follow sysexi
 |---|---|---|
 | `longform version` | release workflow, you | print the build version |
 | `longform status [--json]` | wizard stage 12, skill, you | list jobs and states |
-| `longform watch --once` | launchd | scan every profile inbox, advance every job one step |
+| `longform watch --once` | launchd | scan every profile inbox and Photos album, advance every job one step |
+| `longform photos-watch --profile <p> [--once] [--dry-run]` | wizard stage 11 (`--dry-run`), you | list the profile's Photos album and feed ready recordings into jobs; `69` = osxphotos missing or no Full Disk Access |
+| `longform shortcut --profile <p> [--kind send\|mark] [--album <name>] [--open]` | wizard stage 9 | build and sign the "Send to <Brand> inbox" or "Mark for <Brand>" shortcut; `--open` hands it to the Shortcuts app |
 | `longform stage --profile <p> --file <mp4>` | wizard dry run | create a job from one file without the watcher |
 | `longform brief render --job <dir>` | skill, draft | read `review/draft.json`, write `review/brief.md`, state `drafted` |
 | `longform brief parse-decision --job <dir> "<grammar>"` | skill, approve | write `review/decision.json` and `review/schedule.json`, state `approved` |

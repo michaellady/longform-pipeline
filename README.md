@@ -7,8 +7,10 @@ video, the shorts, and static posts to every social surface after one approval.
 brief.**
 
 ```
-iPhone ──Shortcut──▶ iCloud Drive/Shortcuts/longform-inbox/<profile>/
-                         │  launchd: longform watch --once
+iPhone ─┬─ "Mark for <Brand>" ──▶ Photos album ──iCloud Photos──▶ this Mac (osxphotos) ─────────────┐
+        └─ "Send to <Brand> inbox" (fallback) ──▶ iCloud Drive/Shortcuts/longform-inbox/<profile>/ ─┤
+                         ┌──────────────────────────────────────────────────────────────────────────┘
+                         │  launchd: longform watch --once (inbox + Photos album pass)
                          │  stage · prepare (remux, tonemap, vidstab, whisper, beep)
                          │  upload: 2 OpusClip projects (shorts + full, skipCurate)
                          │  poll until clipped
@@ -25,8 +27,9 @@ iPhone ──Shortcut──▶ iCloud Drive/Shortcuts/longform-inbox/<profile>/
 
 ## Layout
 
-- `cmd/longform`, `internal/` — the deterministic Go transport: watch an inbox, prepare
-  media, talk to OpusClip, enforce publishing gates, hand off to a Claude Code skill.
+- `cmd/longform`, `internal/` — the deterministic Go transport: watch an inbox and a
+  Photos album, prepare media, talk to OpusClip, enforce publishing gates, hand off
+  to a Claude Code skill.
   Every state transition lives here and is idempotent on re-run.
 - `plugins/longform-pipeline` — the Claude Code plugin:
   - `skills/longform-publish` — the thin editorial skill (draft and approve phases)
@@ -36,7 +39,8 @@ iPhone ──Shortcut──▶ iCloud Drive/Shortcuts/longform-inbox/<profile>/
   - `scripts/longform` — the released binary, fetched by `make install` (gitignored)
 - `docs/` — `install.md` (plugin, binary, wizard, the full `longform` command table),
   `profile-schema.md` (every profile field with examples), `shortcut-recipe.md` (the
-  iPhone Shortcut).
+  iPhone Shortcuts), `cli-contract.md` (watcher, stage and Photos feed behaviour),
+  `operator-guide.md` (what a person does by hand).
 - `.github/workflows/release.yml` — tag `v*` builds darwin arm64 and amd64 tarballs
   and publishes a release with a plain-English summary.
 
@@ -60,16 +64,19 @@ make install
 /longform-pipeline:longform-setup
 ```
 
-Then record, Share → the Shortcut, and wait for the brief. Approve with
+Then record, Share → "Mark for <Brand>" (the Photos album feed; "Send to <Brand>
+inbox" is the fallback), and wait for the brief. Approve with
 `/longform-pipeline:longform-publish approve <slug> "approve"` (or `approve except 3,7`, `hold linkedin`,
 `drop 4`, `swap thumbnail 2`, `decide d1 <option>`, `reject`).
 
 ## What you do by hand
 
 Once per brand: run the wizard, connect the OpusClip connector and each social
-platform, create the four Buffer tags, build the iPhone Shortcut, sign the CLI
-in. Per video: record, Share → "Send to <profile> inbox", read the brief,
-approve. The full checklist with the approval grammar is
+platform, create the four Buffer tags, build the iPhone Shortcuts, give the
+`longform` binary Full Disk Access (it reads the Photos album with
+[osxphotos](https://github.com/RhetTbull/osxphotos)), sign the CLI in. Per
+video: record, Share → "Mark for <Brand>" (fallback: "Send to <Brand> inbox"),
+read the brief, approve. The full checklist with the approval grammar is
 [docs/operator-guide.md](docs/operator-guide.md).
 
 ## Job states

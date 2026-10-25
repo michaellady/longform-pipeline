@@ -16,6 +16,7 @@ put anything extra under `extra`.
 | `name` | string | file name | Profile slug; also the job id infix and the inbox folder name. |
 | `brand` | object | required | See Brand. |
 | `inbox` | string | required | Folder the watcher reads. The wizard uses `~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/longform-inbox/<name>`. |
+| `photos` | object | `{enabled:false}` | Second feed: an Apple Photos album. See Photos. |
 | `orientation` | `portrait` \| `landscape` | `portrait` | What the source recording is. Drives the full-video render aspect. |
 | `stitch` | object | `{enabled:false}` | See Stitch. |
 | `stabilize` | object | `{enabled:false}` | See Stabilize. |
@@ -137,6 +138,35 @@ put anything extra under `extra`.
 | `slack_channel` | string | omitted | Channel id the brief link is posted to; the webhook itself lives in `~/.config/longform-pipeline/env` as `SLACK_WEBHOOK_URL`. |
 | `macos` | bool | `false` | Fire a macOS notification on each event. |
 
+## `photos`
+
+The Photos album feed, next to the iCloud Drive `inbox`. The phone adds a
+recording to the album (the "Mark for <Brand>" shortcut, or Share → Add to
+Album), iCloud Photos syncs the bytes in the background, and every watcher pass
+lists the album with `osxphotos`. Once a recording's original is on this Mac it
+is cloned into `<DataRoot>/photos/incoming/` and staged exactly like an inbox
+file; the Photos library itself is never changed. Until then the asset is
+recorded as waiting and one macOS notification fires: "Waiting for <file>
+(<size>) to finish syncing from iCloud Photos to this Mac". Feed state lives in
+`<DataRoot>/photos/<name>.json`. Every recording that has synced by a pass is
+staged in one batch, so `stitch` groups album recordings by recording time just
+like inbox files; for a stitch profile the pass waits while any album recording
+is still syncing, so a class's clips land in one job.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `enabled` | bool | `false` | Run the Photos pass for this profile. The wizard sets it when an album name is given. |
+| `album` | string | `""` | Album name, exactly as in Photos (create it on the phone first). Only movies in it are fed. |
+| `download_missing` | bool | `false` | Ask Photos to download an original that is still only in iCloud (`osxphotos export --download-missing --use-photokit`). Needs a second, Photos-access grant for the watcher, so it is off; the recommended setting instead is Photos → Settings → iCloud → "Download Originals to this Mac". The wizard keeps a hand-set value. |
+| `osxphotos` | path | omitted | `osxphotos` executable. Empty = `$LONGFORM_OSXPHOTOS`, `PATH`, `~/.local/bin/osxphotos` (pipx), `/opt/homebrew/bin/osxphotos`, `/usr/local/bin/osxphotos`. The wizard records the one it found. |
+| `library` | path | omitted | A Photos library other than the system library (`osxphotos --library`). The wizard keeps a hand-set value. |
+
+osxphotos reads the Photos library database, which macOS guards with Full Disk
+Access: the `longform` binary the LaunchAgent runs needs that grant once (System
+Settings → Privacy & Security → Full Disk Access → + → the binary), and again
+after an update replaces the file. Without it the pass logs "osxphotos cannot
+read the Photos library" and `longform photos-watch` exits `69`.
+
 ## Example: `evc`
 
 ```json
@@ -144,6 +174,7 @@ put anything extra under `extra`.
   "name": "evc",
   "brand": { "display": "Enterprise Vibe Code", "site": "https://www.enterprisevibecode.com" },
   "inbox": "~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/longform-inbox/evc",
+  "photos": { "enabled": true, "album": "EVC", "download_missing": false },
   "orientation": "portrait",
   "stitch": { "enabled": false, "session_window_min": 90 },
   "stabilize": { "enabled": true, "shakiness": 5, "smoothing": 15, "zoom": 3 },

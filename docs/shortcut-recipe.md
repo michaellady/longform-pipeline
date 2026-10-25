@@ -1,14 +1,102 @@
-# iOS Shortcut: send a recording to the inbox
+# iOS Shortcuts: get a recording from the phone to the Mac
 
-One Shortcut per profile. It appears in the Share sheet of Photos and the Camera roll,
-saves the selected video(s) into the profile's iCloud Drive inbox, and the Mac's
-launchd watcher does the rest. Build it once on the iPhone (about two minutes).
+Each profile has two Share-sheet shortcuts. Both appear when you share a video from
+Photos; the Mac's launchd watcher does everything after that.
 
-Replace `<profile>` below with the profile name (`evc`, `sandbox-bjj`, ...). The
-folder `iCloud Drive/Shortcuts/longform-inbox/<profile>` is created by `/longform-pipeline:longform-setup`
-stage 2; create it from Files if you build the Shortcut first.
+| Shortcut | What the phone does | Use it for |
+|---|---|---|
+| **Mark for <Brand>** | Adds the video to the profile's Photos album (`photos.album`). Nothing is copied: iCloud Photos uploads the original as it always does, and the Mac's Photos feed picks it up once it has synced. | Everything recorded with the Camera app or saved to Photos. This is the default when the profile has `photos.enabled`. |
+| **Send to <profile> inbox** | Copies the file into `iCloud Drive/Shortcuts/longform-inbox/<profile>/` with Save File. A 20-minute 4K video is copied byte for byte through Shortcuts first. | Files that are not in Photos (the Files app, downloads, other apps' exports), or a profile without the Photos feed. |
 
-## Steps
+Replace `<profile>` below with the profile name (`evc`, `sandbox-bjj`, ...), `<Brand>`
+with its `brand.display`, and `<album>` with its `photos.album` (for example
+`longform-evc`).
+
+## Mark for <Brand> (Photos album)
+
+### Once: create the album on the phone
+
+The shortcut adds to an album that already exists; it does not create one.
+
+1. Open **Photos** on the iPhone → **Albums** → **+** → **New Album**.
+2. Name it exactly as the profile's `photos.album` (same spelling, case and spaces),
+   for example `longform-evc`.
+
+With iCloud Photos on, the album syncs to the Mac's Photos library within a minute or
+so, which is where the watcher's Photos feed reads it. Only movies in the album are
+fed; photos added to it are ignored.
+
+### Steps (hand-built on the iPhone, about one minute)
+
+1. Open **Shortcuts**, tap **+** to create a new Shortcut.
+2. Rename it **Mark for <Brand>**.
+3. Tap the **(i)** info button, then:
+   - turn **Show in Share Sheet** ON
+   - under **Share Sheet Types** pick **Images** and **Media** only
+4. The **Receive input from Share Sheet** action appears at the top. Set its types to
+   **Images** and **Media**. Under "If there's no input" choose **Stop and Respond**.
+5. Add action **Add to Album** (search "Add to Album"; it is a Photos action). Set:
+   - the items: **Shortcut Input**
+   - **Album**: tap it and pick `<album>` from the list
+6. Add action **Show Notification**. Title `Marked for <Brand>`, body
+   `Added to the <album> album. The Mac picks it up once iCloud Photos has synced it.`
+7. Tap **Done**.
+
+The first run asks for permission to access Photos. Allow it once.
+
+### Use it
+
+- **Single take (EVC)**: record in the Camera app, open the video in Photos, tap
+  **Share**, pick **Mark for <Brand>**. It returns at once because nothing is copied.
+- **Several files in one segment (BJJ)**: in Photos tap **Select**, pick every file of
+  the class segment, tap **Share**, pick the Shortcut once. All of them go into the
+  album; the watcher stages every synced album recording of a pass together, so
+  `stitch` groups them by recording time as it does for inbox files.
+- Without the shortcut: **Share** → **Add to Album** → `<album>` does the same thing.
+
+The Mac sees a recording only after iCloud Photos has uploaded it from the phone and
+downloaded the original to the Mac (Photos → Settings → iCloud → "Download Originals
+to this Mac", or the profile's `photos.download_missing`). Until then the watcher
+logs it as waiting and sends one notification. See `docs/profile-schema.md` →
+`photos`.
+
+### Building it on the Mac instead
+
+```bash
+longform shortcut --profile <profile> --kind mark --open
+```
+
+This builds "Mark for <Brand>" as a signed `.shortcut` under
+`~/.config/longform-pipeline/shortcuts/` and opens it in the Mac's Shortcuts app.
+Click **Add Shortcut** once; with Shortcuts' iCloud sync on it reaches the iPhone. The
+album defaults to the profile's `photos.album`; `--album <name>` overrides it, and the
+command exits `64` when neither is set.
+
+A Mac cannot know the phone's ID for the album, so the built shortcut finds the album
+by name when it runs ("Find Albums where Name is `<album>`", limit 1) and passes the
+result to Add to Album. The hand-built version picks the album directly in step 5.
+Both behave the same. If the imported shortcut shows an action it cannot resolve, or
+asks for an album on every run, delete it and hand-build it with the steps above.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Add to Album asks which album, or reports none | the album does not exist on the phone, or its name differs from `photos.album` | create it (Photos → Albums → + → New Album) with the exact name |
+| Shortcut missing from the Share sheet | Share Sheet Types lack Images/Media | step 3 |
+| Shortcut fails on a file from the Files app | Add to Album only works on items already in Photos | use **Send to <profile> inbox** for that file |
+| Marked, but no job after a while | the original has not synced to the Mac yet, or `photos.enabled` is false | `longform status`; check Photos → Settings → iCloud on the Mac; see `docs/profile-schema.md` → `photos` |
+
+## Send to <profile> inbox (fallback for files not in Photos)
+
+It saves the selected file(s) into the profile's iCloud Drive inbox. Build it once on
+the iPhone (about two minutes).
+
+The folder `iCloud Drive/Shortcuts/longform-inbox/<profile>` is created by
+`/longform-pipeline:longform-setup` stage 2; create it from Files if you build the
+Shortcut first.
+
+### Steps
 
 1. Open **Shortcuts** on the iPhone, tap **+** to create a new Shortcut.
 2. Tap the name at the top and rename it **Send to <profile> inbox**. Pick an icon
@@ -29,21 +117,20 @@ stage 2; create it from Files if you build the Shortcut first.
 6. Add action **Show Notification** with the text `Sent to <profile> inbox`.
 7. Tap **Done**.
 
-## Use it
+### Use it
 
-- **Single take (EVC)**: record in the Camera app (standard Video mode, vertical,
-  1080p30 or 4K30), open the video in Photos, tap **Share**, scroll the app row to
+- **Single take (EVC)**: open the video, tap **Share**, scroll the app row to
   **Send to <profile> inbox**. One tap. The notification confirms the save.
-- **Several files in one segment (BJJ)**: in Photos tap **Select**, pick every file of
-  the class segment, tap **Share**, pick the Shortcut once. All files land together; the
-  watcher stitches files whose recording times fall inside the profile's
+- **Several files in one segment (BJJ)**: select every file of the class segment,
+  tap **Share**, pick the Shortcut once. All files land together; the watcher
+  stitches files whose recording times fall inside the profile's
   `stitch.session_window_min`.
 
 iCloud uploads the files when the phone has Wi-Fi or cellular data; the Mac
 downloads them (`brctl download`) when it sees the placeholders. A 15-minute 1080p30
 video is about 1.5 GB, so a Wi-Fi hop takes a few minutes each way.
 
-## Verify
+### Verify
 
 On the Mac, after a minute or two:
 
@@ -56,13 +143,13 @@ tail -f ~/Library/Logs/longform-pipeline/watch.log
 The job appears as `<YYYY-MM-DD>-<profile>-<hash8>` in state `staged`, then
 `prepared`, then `uploaded`. The whole thing is hands-off until the brief arrives.
 
-## AirDrop alternative
+### AirDrop alternative
 
 AirDrop the file to the Mac and move it into the same folder. The watcher does not
 care how the file got there; dedupe is by content hash, so sending the same video
 both ways is harmless.
 
-## Troubleshooting
+### Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -72,7 +159,7 @@ both ways is harmless.
 | File lands but no job | watcher not loaded, or still an iCloud placeholder | `make launchd-install`; wait for the 10-minute tick |
 | Job created twice | different file content (re-export changes bytes) | expected; the second is a new job |
 
-## Building it on the Mac instead
+### Building it on the Mac instead
 
 The wizard (stage 9) and `longform shortcut --profile <profile> --open` build the
 same shortcut as a signed `.shortcut` file under
