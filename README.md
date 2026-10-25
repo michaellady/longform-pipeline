@@ -64,6 +64,14 @@ Then record, Share → the Shortcut, and wait for the brief. Approve with
 `/longform-pipeline:longform-publish approve <slug> "approve"` (or `approve except 3,7`, `hold linkedin`,
 `drop 4`, `swap thumbnail 2`, `decide d1 <option>`, `reject`).
 
+## What you do by hand
+
+Once per brand: run the wizard, connect the OpusClip connector and each social
+platform, create the four Buffer tags, build the iPhone Shortcut, sign the CLI
+in. Per video: record, Share → "Send to <profile> inbox", read the brief,
+approve. The full checklist with the approval grammar is
+[docs/operator-guide.md](docs/operator-guide.md).
+
 ## Job states
 
 ```
