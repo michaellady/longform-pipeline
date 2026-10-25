@@ -22,9 +22,14 @@ func (t Tools) Remux(dir, in, out string) error {
 // autorotate (default on) applies the display matrix during decode, so the
 // output is upright without a rotation tag.
 func (t Tools) Tonemap(dir, in, out, vf string) error {
+	// The output is always tagged BT.709 SDR. With zscale the filter chain
+	// already converts to it; the tonemap-only fallback (an ffmpeg without
+	// zscale) approximates the conversion, and without these tags the file
+	// would still advertise the HDR transfer it no longer carries.
 	_, err := t.run(dir, t.FFmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", in,
 		"-map", "0:v:0", "-map", "0:a?",
 		"-vf", vf, "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+		"-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
 		"-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
 	return err
 }
