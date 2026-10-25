@@ -7,7 +7,7 @@ video, the shorts, and static posts to every social surface after one approval.
 brief.**
 
 ```
-iPhone ──Shortcut──▶ iCloud Drive/longform-inbox/<profile>/
+iPhone ──Shortcut──▶ iCloud Drive/Shortcuts/longform-inbox/<profile>/
                          │  launchd: longform watch --once
                          │  stage · prepare (remux, tonemap, vidstab, whisper, beep)
                          │  upload: 2 OpusClip projects (shorts + full, skipCurate)

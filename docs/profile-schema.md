@@ -15,7 +15,7 @@ put anything extra under `extra`.
 |---|---|---|---|
 | `name` | string | file name | Profile slug; also the job id infix and the inbox folder name. |
 | `brand` | object | required | See Brand. |
-| `inbox` | string | required | Folder the watcher reads. The wizard uses `~/Library/Mobile Documents/com~apple~CloudDocs/longform-inbox/<name>`. |
+| `inbox` | string | required | Folder the watcher reads. The wizard uses `~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/longform-inbox/<name>`. |
 | `orientation` | `portrait` \| `landscape` | `portrait` | What the source recording is. Drives the full-video render aspect. |
 | `stitch` | object | `{enabled:false}` | See Stitch. |
 | `stabilize` | object | `{enabled:false}` | See Stabilize. |
@@ -143,7 +143,7 @@ put anything extra under `extra`.
 {
   "name": "evc",
   "brand": { "display": "Enterprise Vibe Code", "site": "https://www.enterprisevibecode.com" },
-  "inbox": "~/Library/Mobile Documents/com~apple~CloudDocs/longform-inbox/evc",
+  "inbox": "~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/longform-inbox/evc",
   "orientation": "portrait",
   "stitch": { "enabled": false, "session_window_min": 90 },
   "stabilize": { "enabled": true, "shakiness": 5, "smoothing": 15, "zoom": 3 },
@@ -187,7 +187,7 @@ put anything extra under `extra`.
 {
   "name": "sandbox-bjj",
   "brand": { "display": "Sandbox BJJ", "site": "https://www.sandboxbjj.com" },
-  "inbox": "~/Library/Mobile Documents/com~apple~CloudDocs/longform-inbox/sandbox-bjj",
+  "inbox": "~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/longform-inbox/sandbox-bjj",
   "orientation": "landscape",
   "stitch": { "enabled": true, "session_window_min": 90 },
   "stabilize": { "enabled": false, "shakiness": 0, "smoothing": 0, "zoom": 0 },

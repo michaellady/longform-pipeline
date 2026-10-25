@@ -27,8 +27,12 @@ type Spec struct {
 // Name is the shortcut's title as it appears in the Share sheet.
 func (s Spec) Name() string { return "Send to " + s.Brand + " inbox" }
 
-// DestinationPath is the iCloud Drive folder, relative to the Drive root.
-func (s Spec) DestinationPath() string { return "longform-inbox/" + s.Profile }
+// DestinationPath is the folder the Save File action writes into. Shortcuts
+// resolves it inside iCloud Drive's "Shortcuts" folder (on a Mac that is
+// ~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents), and
+// the trailing slash matters: without it the last segment becomes the file
+// name, which is how the first run produced "longform-inbox/evc.mov".
+func (s Spec) DestinationPath() string { return "longform-inbox/" + s.Profile + "/" }
 
 var tmpl = template.Must(template.New("workflow").Funcs(template.FuncMap{"x": xmlEscape}).Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

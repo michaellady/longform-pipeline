@@ -15,7 +15,7 @@ func TestBuildCarriesProfileAndBrand(t *testing.T) {
 	}
 	s := string(data)
 	for _, want := range []string{
-		"<string>longform-inbox/evc</string>",
+		"<string>longform-inbox/evc/</string>",
 		"Sent to Enterprise &amp; Vibe inbox",
 		"is.workflow.actions.documentpicker.save",
 		"is.workflow.actions.notification",
@@ -57,6 +57,9 @@ func TestBuildIsValidPlistWhenPlutilExists(t *testing.T) {
 }
 
 func TestSignWhenShortcutsToolExists(t *testing.T) {
+	if os.Getenv("LONGFORM_INTEGRATION") == "" {
+		t.Skip("set LONGFORM_INTEGRATION=1: signing needs a Mac signed into iCloud")
+	}
 	if _, err := exec.LookPath("shortcuts"); err != nil {
 		t.Skip("shortcuts tool not available")
 	}
