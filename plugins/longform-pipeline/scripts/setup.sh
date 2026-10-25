@@ -405,18 +405,23 @@ if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
 else
   note "CLAUDE_CONFIG_DIR is not set: using ~/.claude (the terminal CLI)"
 fi
-if command -v claude >/dev/null 2>&1; then
-  if claude mcp add --transport http opusclip https://mcp.opus.pro/mcp --scope user >/dev/null 2>&1; then
-    printf '  %s✓ added%s opusclip MCP (user scope)\n' "$GREEN" "$RESET"
-  else
-    note "mcp add returned non-zero (already added, or claude too old); continuing"
-  fi
+say "The OpusClip connector attached to your claude.ai account is the preferred route:"
+say "it follows the account, so every session signed in as you sees it, and its post and"
+say "schedule tools hand back a confirmation link instead of committing directly."
+if command -v claude >/dev/null 2>&1 && claude mcp list 2>/dev/null | grep -qi 'claude.ai OpusClip'; then
+  printf '  %s✓ found%s the claude.ai OpusClip connector in this config\n' "$GREEN" "$RESET"
 else
-  SKIPPED+=("claude mcp add --transport http opusclip https://mcp.opus.pro/mcp --scope user")
-  warn "claude CLI not on PATH; add the MCP later"
+  step "Add it once: in a Claude session run '/mcp' and connect OpusClip, or add OpusClip under claude.ai → Settings → Connectors, then sign in on OpusClip's consent page."
+  if confirm "Also register the standalone HTTP server (https://mcp.opus.pro/mcp) for CLI-only use?"; then
+    if command -v claude >/dev/null 2>&1 && claude mcp add --transport http opusclip https://mcp.opus.pro/mcp --scope user >/dev/null 2>&1; then
+      printf '  %s✓ added%s opusclip HTTP server (user scope); authorize it with /mcp\n' "$GREEN" "$RESET"
+    else
+      SKIPPED+=("claude mcp add --transport http opusclip https://mcp.opus.pro/mcp --scope user")
+      warn "could not register the HTTP server; add it later"
+    fi
+  fi
 fi
-step "Now open an interactive session: run 'claude', then '/mcp', pick opusclip, choose Authenticate, finish the OAuth in the browser."
-pause "Done with OAuth (or skipping for now)?"
+pause "OpusClip connected (or skipping for now)?"
 
 # ── 5 ──────────────────────────────────────────────────────────────────────
 stage "Connect social accounts in the OpusClip dashboard"

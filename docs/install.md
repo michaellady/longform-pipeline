@@ -190,8 +190,13 @@ directory, so the whole pipeline must agree on one:
 2. Run the wizard from that same shell. It registers the OpusClip MCP there and
    writes `CLAUDE_CONFIG_DIR` into the LaunchAgent, so the headless editorial
    session that launchd starts uses the app's plugin, MCP and sign-in.
-3. Authorize the OpusClip MCP once from a session in the app: `/mcp` → `opusclip`
-   → Authenticate.
+3. Connect OpusClip once as a claude.ai **connector** (`/mcp` in a session, or
+   claude.ai → Settings → Connectors), then sign in on OpusClip's consent page.
+   `claude mcp list` then shows `claude.ai OpusClip`. The connector follows your
+   account rather than a config directory, so every session signed in as you sees
+   it, including the headless one launchd starts. The standalone HTTP server
+   (`https://mcp.opus.pro/mcp`) is only for CLI-only setups and is not needed
+   alongside the connector.
 
 To move the pipeline to the terminal CLI instead, re-run the wizard from a terminal
 where `CLAUDE_CONFIG_DIR` is unset; `make launchd-install` re-renders the agent.
