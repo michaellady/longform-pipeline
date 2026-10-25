@@ -15,7 +15,7 @@ binary for everything else.
 Two entry points:
 
 - `/longform-pipeline:longform-publish <jobdir>` — draft phase. Runs headless from launchd
-  (`claude -p "/longform-pipeline:longform-publish $JOB_DIR" --permission-mode acceptEdits`), so never
+  (`claude -p "/longform-pipeline:longform-publish $JOB_DIR" --model opus --permission-mode acceptEdits`), so never
   ask a question; put open questions in `decisions[]` instead. Ends at state `drafted`.
 - `/longform-pipeline:longform-publish approve <slug> "<grammar>"` — approval phase, interactive.
   Ends at state `scheduled`.

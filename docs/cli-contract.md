@@ -60,8 +60,9 @@ the wizard dry run:
 - `stitched`: `true` when more than one source was concatenated.
 - `extra.stitched_path` (`"stitched.mp4"`), `extra.stitched_mode`
   (`"copy"` or `"reencode"`), `extra.stitched_duration_ms`.
-- `extra.session_launched_at` (RFC3339), `extra.session_pid`,
-  `extra.session_stdout`, `extra.session_stderr`: written by `launch-session`.
+- `extra.session_launched_at` (RFC3339), `extra.session_model`,
+  `extra.session_pid`, `extra.session_stdout`, `extra.session_stderr`:
+  written by `launch-session`.
 - `history[]`: `stage` appends `detected -> staged`; a failure mid-stage
   appends `-> failed` with the error in `note` and `error`.
 
@@ -320,7 +321,7 @@ the signed file's path on stdout. `--kind` picks which:
 ## `longform launch-session`
 
 ```
-longform launch-session [--force] [--claude <path>] <jobdir>
+longform launch-session [--force] [--claude <path>] [--model <name>] <jobdir>
 ```
 
 Brief, verbatim:
@@ -334,7 +335,10 @@ Details: refuses (`65`) unless the job is at least `clipped`, prints and
 exits `0` without launching when `extra.session_launched_at` is already set;
 `--force` overrides both. The claude binary is `--claude`, then
 `$LONGFORM_CLAUDE`, then `PATH`, then `~/.local/bin/claude` (`70` when none
-is found). The process starts with the job directory as its working
+is found). The session runs on `--model`, then `$LONGFORM_CLAUDE_MODEL`,
+then `opus` (the claude CLI alias for the current Opus); the value is passed
+as `claude --model <name>` and recorded in `extra.session_model`. The
+process starts with the job directory as its working
 directory (so `acceptEdits` covers `review/` writes) and in its own session
 id so launchd does not reap it with the watcher. The log files are opened in
 append mode, so a `--force` relaunch adds to them.
