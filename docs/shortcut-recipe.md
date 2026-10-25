@@ -35,12 +35,22 @@ fed; photos added to it are ignored.
    - under **Share Sheet Types** pick **Images** and **Media** only
 4. The **Receive input from Share Sheet** action appears at the top. Set its types to
    **Images** and **Media**. Under "If there's no input" choose **Stop and Respond**.
-5. Add action **Add to Album** (search "Add to Album"; it is a Photos action). Set:
-   - the items: **Shortcut Input**
-   - **Album**: tap it and pick `<album>` from the list
-6. Add action **Show Notification**. Title `Marked for <Brand>`, body
+5. Add action **Remove from Photo Album** (search "Remove from"). Set the input to
+   **Shortcut Input** and **Album** to `<album>`. This step only makes a second mark of
+   the same video harmless (see below); it does nothing to a video not yet in the album.
+6. Add action **Save to Photos** (older iOS: **Save to Photo Album**; search "Save to
+   Photo"). Set the input to **Shortcut Input** and **Album** to `<album>`.
+7. Add action **Show Notification**. Title `Marked for <Brand>`, body
    `Added to the <album> album. The Mac picks it up once iCloud Photos has synced it.`
-7. Tap **Done**.
+8. Tap **Done**.
+
+Shortcuts has no usable "Add to Album" action: Photos' own *Add Photos To Album* intent
+is hidden from the action library, and a shortcut file containing it is refused at
+import. **Save to Photos** with an album is what adds an item to an album. Given a
+video shared from Photos that is not in the album yet, it adds that same video to the
+album and copies nothing; given one that is already in the album, it saves a second
+copy. Removing it from the album first (step 5) means a repeated mark puts the original
+back instead of duplicating a multi-gigabyte recording.
 
 The first run asks for permission to access Photos. Allow it once.
 
@@ -72,19 +82,28 @@ Click **Add Shortcut** once; with Shortcuts' iCloud sync on it reaches the iPhon
 album defaults to the profile's `photos.album`; `--album <name>` overrides it, and the
 command exits `64` when neither is set.
 
-A Mac cannot know the phone's ID for the album, so the built shortcut finds the album
-by name when it runs ("Find Albums where Name is `<album>`", limit 1) and passes the
-result to Add to Album. The hand-built version picks the album directly in step 5.
-Both behave the same. If the imported shortcut shows an action it cannot resolve, or
-asks for an album on every run, delete it and hand-build it with the steps above.
+The built shortcut is the same three actions as the hand-built one (Remove from Photo
+Album, Save to Photos, Show Notification). Both actions name the album by its title,
+and Shortcuts looks the album up by that name on whichever device runs it, so the Mac
+does not need the phone's ID for it. If the imported shortcut shows an action it cannot
+resolve, or asks for an album on every run, delete it and hand-build it with the steps
+above.
+
+Do not add Photos' *Add Photos To Album* or *Find Albums* intents to a built shortcut:
+the Mac's Shortcuts refuses any shortcut file containing an Apple App Intent that is
+not on its public-action list ("This shortcut can't be imported because it contains
+features not supported on this device"), and *Add Photos To Album* is on none of them
+(Mac, iPhone or iPad). `shortcuts sign` does not check this; only the import does.
 
 ### Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Add to Album asks which album, or reports none | the album does not exist on the phone, or its name differs from `photos.album` | create it (Photos → Albums → + → New Album) with the exact name |
+| "The photo album that was selected does not exist", or the shortcut asks which album | the album does not exist on the phone, or its name differs from `photos.album` | create it (Photos → Albums → + → New Album) with the exact name |
+| "Can't Import Shortcut … contains features not supported on this device" on the Mac | the file holds an App Intent the Mac will not import (an old build used *Add Photos To Album*) | rebuild with `longform shortcut --profile <profile> --kind mark`, or hand-build on the phone |
 | Shortcut missing from the Share sheet | Share Sheet Types lack Images/Media | step 3 |
-| Shortcut fails on a file from the Files app | Add to Album only works on items already in Photos | use **Send to <profile> inbox** for that file |
+| Shortcut fails on a file from the Files app | Remove from Photo Album only works on items already in Photos | use **Send to <profile> inbox** for that file |
+| Two copies of a video in the album | the step-5 Remove from Photo Album is missing, and the video was marked twice | add step 5; delete the extra copy in Photos |
 | Marked, but no job after a while | the original has not synced to the Mac yet, or `photos.enabled` is false | `longform status`; check Photos → Settings → iCloud on the Mac; see `docs/profile-schema.md` → `photos` |
 
 ## Send to <profile> inbox (fallback for files not in Photos)
