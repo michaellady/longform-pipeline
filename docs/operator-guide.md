@@ -58,7 +58,8 @@ macOS notifications fire regardless.
 
    Variants, combinable with `;`: `approve except 3,7` (hold those clip rows),
    `hold linkedin` (skip a platform), `drop 4`, `swap thumbnail 2`,
-   `decide d1 <option>`, `reject <note>`.
+   `decide d1 <option>`, `reject <note>`. The note is everything after
+   `reject`, commas and all, so make it the last clause.
 
 Nothing posts until step 5. After approval the schedule is enforced by the
 gates (platform caps, cadence, profanity in titles), the manifest records every

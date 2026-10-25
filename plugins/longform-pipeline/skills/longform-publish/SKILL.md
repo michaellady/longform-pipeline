@@ -265,7 +265,7 @@ three rounds, put the unresolved finding in `decisions[]` and hold the affected 
 
 `/longform-pipeline:longform-publish approve <slug> "<grammar>"`
 
-Grammar (one or more, comma-separated clauses are not supported; run twice instead):
+Grammar (clauses separated by `;`; `reject` must be the last clause):
 
 | Phrase | Effect |
 |---|---|
@@ -275,7 +275,7 @@ Grammar (one or more, comma-separated clauses are not supported; run twice inste
 | `drop 4` | clip 4 is removed, not held (will not enter the backlog) |
 | `swap thumbnail 2` | approve with thumbnail candidate 2 `chosen` |
 | `decide d1 <option>` | answer decision `d1`; combine by running once per decision before `approve` |
-| `reject` | state stays `drafted`, nothing is scheduled; rerun the draft phase after edits |
+| `reject <note>` | state stays `drafted`, nothing is scheduled; everything after `reject` is the note, punctuation included; rerun the draft phase after edits |
 
 Steps, in order, reading every exit code:
 
