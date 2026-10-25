@@ -197,27 +197,61 @@ func (r *runner) run() error {
 	r.state.Stabilized = false
 	if prof.Stabilize.Enabled {
 		s := prof.Stabilize
-		sig := fmt.Sprintf("vidstab:%d:%d:%d", s.Shakiness, s.Smoothing, s.Zoom)
-		err := r.step("stabilize", job.Path(RemuxOut), StabilizedOut, sig, func() error {
-			if err := r.opts.Tools.StabilizeDetect(job.Dir(), RemuxOut, media.StabilizeDetectFilter(s.Shakiness, TransformsOut)); err != nil {
+		// The local ffmpeg decides the method: two-pass vidstab when it is
+		// built in, the single-pass deshake filter otherwise, and no
+		// stabilisation at all when neither exists. A missing filter is a tool
+		// change on this machine (Homebrew's ffmpeg 9.0.2 dropped vidstab), not
+		// a reason to fail the job.
+		hasVidstab, _ := r.opts.Tools.HasFilter("vidstabdetect")
+		hasDeshake, _ := r.opts.Tools.HasFilter("deshake")
+		switch {
+		case hasVidstab:
+			sig := fmt.Sprintf("vidstab:%d:%d:%d", s.Shakiness, s.Smoothing, s.Zoom)
+			err := r.step("stabilize", job.Path(RemuxOut), StabilizedOut, sig, func() error {
+				if err := r.opts.Tools.StabilizeDetect(job.Dir(), RemuxOut, media.StabilizeDetectFilter(s.Shakiness, TransformsOut)); err != nil {
+					return err
+				}
+				if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, media.StabilizeTransformFilter(s.Smoothing, s.Zoom, TransformsOut)); err != nil {
+					return err
+				}
+				at := info.DurationMs / 4
+				if err := r.opts.Tools.ExtractFrame(job.Dir(), RemuxOut, at, StabilizeBefore); err != nil {
+					return err
+				}
+				return r.opts.Tools.ExtractFrame(job.Dir(), StabilizedOut, at, StabilizeAfter)
+			})
+			if err != nil {
 				return err
 			}
-			if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, media.StabilizeTransformFilter(s.Smoothing, s.Zoom, TransformsOut)); err != nil {
+			current = StabilizedOut
+			r.state.Stabilized = true
+			job.Artifacts.StabilizeBefore = StabilizeBefore
+			job.Artifacts.StabilizeAfter = StabilizeAfter
+			r.setExtra(job, "stabilize_method", "vidstab")
+		case hasDeshake:
+			sig := "deshake"
+			err := r.step("stabilize", job.Path(RemuxOut), StabilizedOut, sig, func() error {
+				if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, "deshake"); err != nil {
+					return err
+				}
+				at := info.DurationMs / 4
+				if err := r.opts.Tools.ExtractFrame(job.Dir(), RemuxOut, at, StabilizeBefore); err != nil {
+					return err
+				}
+				return r.opts.Tools.ExtractFrame(job.Dir(), StabilizedOut, at, StabilizeAfter)
+			})
+			if err != nil {
 				return err
 			}
-			at := info.DurationMs / 4
-			if err := r.opts.Tools.ExtractFrame(job.Dir(), RemuxOut, at, StabilizeBefore); err != nil {
-				return err
-			}
-			return r.opts.Tools.ExtractFrame(job.Dir(), StabilizedOut, at, StabilizeAfter)
-		})
-		if err != nil {
-			return err
+			current = StabilizedOut
+			r.state.Stabilized = true
+			job.Artifacts.StabilizeBefore = StabilizeBefore
+			job.Artifacts.StabilizeAfter = StabilizeAfter
+			r.setExtra(job, "stabilize_method", "deshake (vidstab filter not in this ffmpeg)")
+		default:
+			fmt.Fprintln(os.Stderr, "stabilize   skip (this ffmpeg has neither vidstab nor deshake)")
+			r.setExtra(job, "stabilize_method", "skipped: no vidstab or deshake filter in ffmpeg")
 		}
-		current = StabilizedOut
-		r.state.Stabilized = true
-		job.Artifacts.StabilizeBefore = StabilizeBefore
-		job.Artifacts.StabilizeAfter = StabilizeAfter
 	}
 
 	// Probe the intermediate: the censor graph must match its audio format.
@@ -417,4 +451,17 @@ func (r *runner) saveState() error {
 	}
 	r.job.Extra["prepare"] = generic
 	return r.job.Save()
+}
+
+// setExtra records a note under job.extra.prepare.<key> without failing the run.
+func (r *runner) setExtra(job *model.Job, key string, val any) {
+	if job.Extra == nil {
+		job.Extra = map[string]any{}
+	}
+	prep, _ := job.Extra["prepare"].(map[string]any)
+	if prep == nil {
+		prep = map[string]any{}
+	}
+	prep[key] = val
+	job.Extra["prepare"] = prep
 }
