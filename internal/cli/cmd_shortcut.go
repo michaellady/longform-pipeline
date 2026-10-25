@@ -77,6 +77,7 @@ func runShortcut(args []string) int {
 	}
 	if spec.Kind == shortcut.KindMark {
 		fmt.Fprintf(os.Stderr, "shortcut: create the %q album on the phone first (Photos > Albums > + > New Album); the shortcut finds it by name.\n", spec.Album)
+		fmt.Fprintf(os.Stderr, "shortcut: the zero-copy route is Photos' own Share > Add to Album > %q. A shortcut run from the Share sheet makes Photos export the whole video first (\"Preparing...\"), which takes minutes for a long recording; use the shortcut only when that wait is acceptable.\n", spec.Album)
 	}
 	return 0
 }
