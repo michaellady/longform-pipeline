@@ -284,7 +284,15 @@ render_plist() {
       -e "s|@@LOG@@|$LOG_DIR|g" \
       -e "s|@@ENV_FILE@@|$ENV_FILE|g" \
       "$PLIST_TMPL" \
-  | awk -v f="$tmp" '$0 ~ /^[[:space:]]*@@WATCHPATHS@@[[:space:]]*$/ { while ((getline l < f) > 0) print l; close(f); next } { print }' \
+  | awk -v f="$tmp" -v cfg="${CLAUDE_CONFIG_DIR:-}" '
+      $0 ~ /^[[:space:]]*@@WATCHPATHS@@[[:space:]]*$/ { while ((getline l < f) > 0) print l; close(f); next }
+      $0 ~ /^[[:space:]]*@@CLAUDE_CONFIG@@[[:space:]]*$/ {
+        # The headless editorial session must use the same Claude config the
+        # wizard ran under (plugin, MCP entry and sign-in all live there).
+        if (cfg != "") { print "    <key>CLAUDE_CONFIG_DIR</key>"; print "    <string>" cfg "</string>" }
+        next
+      }
+      { print }' \
   > "$AGENT_PLIST"
   rm -f "$tmp"
   printf '  %s✓ wrote%s %s\n' "$GREEN" "$RESET" "$AGENT_PLIST"
@@ -373,10 +381,13 @@ note "stored in $ENV_FILE (mode 0600); the LaunchAgent sources it via LONGFORM_E
 # ── 4 ──────────────────────────────────────────────────────────────────────
 stage "OpusClip MCP (interactive sessions)"
 say "Interactive sessions use the OpusClip MCP over OAuth; launchd uses the key."
-note "The MCP entry is written to the config that CLAUDE_CONFIG_DIR points at (default ~/.claude),"
-note "so this runs in your normal shell, not inside a Claude session."
+note "The MCP entry is written to the Claude config this wizard runs under"
+note "(CLAUDE_CONFIG_DIR if set, else ~/.claude); the LaunchAgent is pinned to the"
+note "same config, so headless sessions find the plugin, the MCP and the sign-in there."
 if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
-  warn "CLAUDE_CONFIG_DIR is set to $CLAUDE_CONFIG_DIR; the MCP will be added there"
+  note "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR (the Claude desktop app's shell sets this)"
+else
+  note "CLAUDE_CONFIG_DIR is not set: using ~/.claude (the terminal CLI)"
 fi
 if command -v claude >/dev/null 2>&1; then
   if claude mcp add --transport http opusclip https://mcp.opus.pro/mcp --scope user >/dev/null 2>&1; then
