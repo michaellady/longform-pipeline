@@ -2,10 +2,12 @@ package shortcut
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -79,22 +81,18 @@ func TestBuildKinds(t *testing.T) {
 			spec:    Spec{Profile: "evc", Brand: "EVC"},
 			title:   "Send to EVC inbox",
 			want:    []string{"is.workflow.actions.documentpicker.save", "<string>longform-inbox/evc/</string>", "Sent to EVC inbox"},
-			notWant: []string{AddToAlbumActionID, FindAlbumsActionID, "Marked for"},
+			notWant: []string{RemoveFromAlbumActionID, SaveToAlbumActionID, "Marked for"},
 		},
 		{
 			name:  "mark",
 			spec:  Spec{Profile: "evc", Brand: "EVC", Kind: KindMark, Album: "longform-evc"},
 			title: "Mark for EVC",
 			want: []string{
-				"<string>com.apple.mobileslideshow.AddAssetsToAlbumIntent</string>",
-				"<string>com.apple.mobileslideshow.AlbumEntity</string>",
-				"<string>AddAssetsToAlbumIntent</string>",
-				"<string>com.apple.mobileslideshow</string>",
-				"<key>assets</key>",
-				"<key>album</key>",
+				"<string>is.workflow.actions.removefromalbum</string>",
+				"<string>is.workflow.actions.savetocameraroll</string>",
+				"<key>WFRemoveAlbumSelectedGroup</key>\n\t\t\t\t<string>longform-evc</string>",
+				"<key>WFCameraRollSelectedGroup</key>\n\t\t\t\t<string>longform-evc</string>",
 				"<string>ExtensionInput</string>",
-				"<string>longform-evc</string>",
-				"<string>Name</string>",
 				"<string>WFPhotoMediaContentItem</string>",
 				"<string>ActionExtension</string>",
 				"<string>Marked for EVC</string>",
@@ -152,22 +150,101 @@ func TestBuildKinds(t *testing.T) {
 	}
 }
 
-// TestMarkWiresFindAlbumsIntoAddToAlbum checks the album parameter reads the
-// Find Albums action's output (by UUID) rather than a fixed, device-local id.
-func TestMarkWiresFindAlbumsIntoAddToAlbum(t *testing.T) {
+// TestMarkWorkflowPinned pins the mark kind byte for byte, so any change to
+// what the phone runs is deliberate. The bytes are the ones whose actions were
+// matched against shared shortcuts and checked against WorkflowKit's import
+// allowlist (see the comment on SaveToAlbumActionID).
+func TestMarkWorkflowPinned(t *testing.T) {
+	for _, tc := range []struct {
+		spec Spec
+		sum  string
+	}{
+		{Spec{Profile: "evc", Brand: "EVC", Kind: KindMark, Album: "longform-evc"}, "1db8f6e298bf71b11e0fa31b0f4521babe07ceb60385cff43f7901e1ad49df7b"},
+		{Spec{Profile: "evc", Brand: "Enterprise & Vibe", Kind: KindMark, Album: "Q&A <raw>"}, "509d66b0a7ad7b08e57bb0aae4ce3d72c9eab416e2955d08b690e982fe26a701"},
+	} {
+		data, err := Build(tc.spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != tc.sum {
+			t.Errorf("%+v: mark workflow changed: sha256 %s, want %s", tc.spec, got, tc.sum)
+		}
+	}
+}
+
+// TestMarkUsesNoAppIntents guards the import: Shortcuts refuses a shortcut
+// holding an Apple App Intent missing from its public-action allowlist, and
+// Photos' Add Photos To Album intent is missing from all of them. The mark kind
+// must stay on classic is.workflow.actions.* actions.
+func TestMarkUsesNoAppIntents(t *testing.T) {
 	data, err := Build(Spec{Profile: "evc", Brand: "EVC", Kind: KindMark, Album: "longform-evc"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(data)
-	if got := strings.Count(s, "<string>"+findAlbumsUUID+"</string>"); got != 2 {
-		t.Errorf("Find Albums UUID appears %d times, want 2 (its own UUID and Add to Album's album input)", got)
+	for _, bad := range []string{"AppIntentDescriptor", "AddAssetsToAlbumIntent", "AlbumEntity", "com.apple.mobileslideshow", "com.apple.Photos"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("mark plist contains %q", bad)
+		}
 	}
-	find := strings.Index(s, FindAlbumsActionID)
-	add := strings.Index(s, AddToAlbumActionID)
-	note := strings.Index(s, "is.workflow.actions.notification")
-	if !(find >= 0 && find < add && add < note) {
-		t.Errorf("action order find=%d add=%d notification=%d, want Find Albums, Add to Album, Show Notification", find, add, note)
+	remove := strings.Index(s, "<string>"+RemoveFromAlbumActionID+"</string>")
+	save := strings.Index(s, "<string>"+SaveToAlbumActionID+"</string>")
+	note := strings.Index(s, "<string>is.workflow.actions.notification</string>")
+	if !(remove >= 0 && remove < save && save < note) {
+		t.Errorf("action order remove=%d save=%d notification=%d, want Remove from Album, Save to Photo Album, Show Notification", remove, save, note)
+	}
+	if got := strings.Count(s, "<string>ExtensionInput</string>"); got != 2 {
+		t.Errorf("Shortcut Input used %d times, want 2 (Remove from Album and Save to Photo Album)", got)
+	}
+}
+
+// TestMarkActionsMatchShortcutsSerialisation decodes the plist with plutil and
+// compares each action with the form Shortcuts itself stores: the album as a
+// bare title string and the input as a WFTextTokenAttachment (as in shared
+// shortcuts that move existing photos between albums).
+func TestMarkActionsMatchShortcutsSerialisation(t *testing.T) {
+	if _, err := exec.LookPath("plutil"); err != nil {
+		t.Skip("plutil not available")
+	}
+	data, err := Build(Spec{Profile: "evc", Brand: "EVC", Kind: KindMark, Album: "longform-evc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "mark.plist")
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("plutil", "-extract", "WFWorkflowActions", "json", "-o", "-", p).Output()
+	if err != nil {
+		t.Fatalf("plutil -extract: %v", err)
+	}
+	var actions []map[string]any
+	if err := json.Unmarshal(out, &actions); err != nil {
+		t.Fatal(err)
+	}
+	input := map[string]any{"Value": map[string]any{"Type": "ExtensionInput"}, "WFSerializationType": "WFTextTokenAttachment"}
+	want := []map[string]any{
+		{
+			"WFWorkflowActionIdentifier": "is.workflow.actions.removefromalbum",
+			"WFWorkflowActionParameters": map[string]any{"WFInput": input, "WFRemoveAlbumSelectedGroup": "longform-evc"},
+		},
+		{
+			"WFWorkflowActionIdentifier": "is.workflow.actions.savetocameraroll",
+			"WFWorkflowActionParameters": map[string]any{"WFCameraRollSelectedGroup": "longform-evc", "WFInput": input},
+		},
+		{
+			"WFWorkflowActionIdentifier": "is.workflow.actions.notification",
+			"WFWorkflowActionParameters": map[string]any{
+				"WFNotificationActionTitle": "Marked for EVC",
+				"WFNotificationActionBody":  "Added to the longform-evc album. The Mac picks it up once iCloud Photos has synced it.",
+				"WFNotificationActionSound": true,
+			},
+		},
+	}
+	if !reflect.DeepEqual(actions, want) {
+		got, _ := json.MarshalIndent(actions, "", "  ")
+		exp, _ := json.MarshalIndent(want, "", "  ")
+		t.Errorf("mark actions:\n%s\nwant:\n%s", got, exp)
 	}
 }
 

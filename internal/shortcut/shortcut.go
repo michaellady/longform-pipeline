@@ -33,26 +33,28 @@ const (
 	KindMark = "mark" // Add to the profile's Photos album
 )
 
-// Identifiers the mark kind uses. "Add to Album" is not a classic
-// is.workflow.actions.* action (is.workflow.actions.addtoalbum does not exist;
-// WorkflowKit reports it as "Unknown Action"). It is the Photos App Intent
-// AddAssetsToAlbumIntent (PhotosUICore's Metadata.appintents: parameters
-// "assets" [AssetEntity] and "album" AlbumEntity). Shortcuts files name Photos
-// intents by the iOS bundle id: WorkflowKit's exported constants read
-// WFLinkActionIdentifierPhotosDeleteAlbumsIntent =
-// "com.apple.mobileslideshow.DeleteAlbumsIntent" and
-// WFLinkActionIdentifierPhotosFindAlbum = "com.apple.mobileslideshow.AlbumEntity"
-// (macOS 27, probed with dlsym). The album parameter holds an AlbumEntity,
-// whose fixed value is a device-local id the Mac cannot know, so the shortcut
-// finds the album by name on the phone ("Find Albums where Name is <album>")
-// and passes that action's output to Add to Album.
+// Actions the mark kind uses: the classic Photos actions, never the Photos App
+// Intents. The "Add Photos To Album" intent (<bundle>.AddAssetsToAlbumIntent)
+// cannot be imported: Shortcuts refuses any shortcut holding an Apple App
+// Intent that is missing from WorkflowKit's public-action allowlist
+// (Resources/AssistantIntents-{mac,iPhone,iPad}.metadata, md5 of
+// "<bundle>.<intent>"; "can't be imported because it contains features not
+// supported on this device"), and AddAssetsToAlbumIntent is in none of them on
+// OS 27 (macOS 27.0.1, WorkflowKit 5037.0.19) nor on iOS 26.0.
+//
+// Save to Photo Album (is.workflow.actions.savetocameraroll) is how real
+// shortcuts put existing photos into an album. Its album parameter is the album
+// title as a plain string, which Shortcuts matches by name on whichever device
+// runs it. Given a Photos item (WFPhotoMediaContentItem) that is not yet in the
+// album it adds that PHAsset to the album (PHAssetCollectionChangeRequest
+// addAssets:) and copies nothing; given one that is already in the album it
+// saves a second copy. Remove from Album first makes a repeated mark harmless:
+// it is a no-op for an item not in the album, and afterwards Save to Photo
+// Album adds the original back instead of copying it.
 const (
-	PhotosBundleID        = "com.apple.mobileslideshow"
-	AddToAlbumActionID    = PhotosBundleID + ".AddAssetsToAlbumIntent"
-	FindAlbumsActionID    = PhotosBundleID + ".AlbumEntity"
-	findAlbumsUUID        = "5E1C6A0B-2F4D-4B8E-9A37-0C5D8F1E2A61"
-	addToAlbumUUID        = "9B7E3D52-6A1C-4F08-B2D4-7E6F0A3C1D95"
-	photoMediaContentItem = "WFPhotoMediaContentItem" // a PHAsset from the Photos share sheet
+	RemoveFromAlbumActionID = "is.workflow.actions.removefromalbum"
+	SaveToAlbumActionID     = "is.workflow.actions.savetocameraroll"
+	photoMediaContentItem   = "WFPhotoMediaContentItem" // a PHAsset from the Photos share sheet
 )
 
 // Spec is what the shortcut needs to know.
@@ -187,14 +189,14 @@ var tmpl = template.Must(template.New("workflow").Funcs(template.FuncMap{"x": xm
 </plist>
 `))
 
-// markTmpl is the "Mark for <Brand>" workflow: Find Albums (Name is <album>,
-// limit 1) -> Add to Album (assets = Shortcut Input, album = Find Albums'
-// output) -> Show Notification. The App Intent actions follow the form of
-// Apple's own Gallery workflows (WorkflowKit Gallery.bundle: Find Notes is
-// is.workflow.actions.filter.notes + AppIntentDescriptor; Summarize Text is
-// <bundle>.<IntentIdentifier>). WFPhotoMediaContentItem is listed first so the
-// Photos share sheet hands over the PHAsset itself, which WorkflowKit coerces
-// to the intent's AssetEntity (WFPhotoMediaContentItem +linkEntityCoercionHandler).
+// markTmpl is the "Mark for <Brand>" workflow: Remove from Album (<album>,
+// Shortcut Input) -> Save to Photo Album (<album>, Shortcut Input) -> Show
+// Notification. The two Photos actions are serialised exactly as Shortcuts
+// stores them (album = title string, input = WFTextTokenAttachment), which is
+// also the form shared shortcuts that move existing photos between albums use.
+// They carry no UUIDs because no action reads another's output, as in the
+// send kind. WFPhotoMediaContentItem is an accepted input class so the Photos
+// share sheet hands over the PHAsset itself rather than a file copy of it.
 var markTmpl = template.Must(template.New("mark").Funcs(template.FuncMap{"x": xmlEscape}).Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -240,79 +242,10 @@ var markTmpl = template.Must(template.New("mark").Funcs(template.FuncMap{"x": xm
 	<array>
 		<dict>
 			<key>WFWorkflowActionIdentifier</key>
-			<string>` + FindAlbumsActionID + `</string>
+			<string>` + RemoveFromAlbumActionID + `</string>
 			<key>WFWorkflowActionParameters</key>
 			<dict>
-				<key>AppIntentDescriptor</key>
-				<dict>
-					<key>TeamIdentifier</key>
-					<string>0000000000</string>
-					<key>BundleIdentifier</key>
-					<string>` + PhotosBundleID + `</string>
-					<key>Name</key>
-					<string>Photos</string>
-					<key>AppIntentIdentifier</key>
-					<string>AlbumEntity</string>
-					<key>ActionRequiresAppInstallation</key>
-					<true/>
-				</dict>
-				<key>WFContentItemFilter</key>
-				<dict>
-					<key>Value</key>
-					<dict>
-						<key>WFActionParameterFilterPrefix</key>
-						<integer>1</integer>
-						<key>WFContentPredicateBoundedDate</key>
-						<false/>
-						<key>WFActionParameterFilterTemplates</key>
-						<array>
-							<dict>
-								<key>Operator</key>
-								<integer>4</integer>
-								<key>Property</key>
-								<string>Name</string>
-								<key>Removable</key>
-								<true/>
-								<key>Values</key>
-								<dict>
-									<key>Unit</key>
-									<integer>4</integer>
-									<key>String</key>
-									<string>{{x .Album}}</string>
-								</dict>
-							</dict>
-						</array>
-					</dict>
-					<key>WFSerializationType</key>
-					<string>WFContentPredicateTableTemplate</string>
-				</dict>
-				<key>WFContentItemLimitEnabled</key>
-				<true/>
-				<key>WFContentItemLimitNumber</key>
-				<real>1</real>
-				<key>UUID</key>
-				<string>` + findAlbumsUUID + `</string>
-			</dict>
-		</dict>
-		<dict>
-			<key>WFWorkflowActionIdentifier</key>
-			<string>` + AddToAlbumActionID + `</string>
-			<key>WFWorkflowActionParameters</key>
-			<dict>
-				<key>AppIntentDescriptor</key>
-				<dict>
-					<key>TeamIdentifier</key>
-					<string>0000000000</string>
-					<key>BundleIdentifier</key>
-					<string>` + PhotosBundleID + `</string>
-					<key>Name</key>
-					<string>Photos</string>
-					<key>AppIntentIdentifier</key>
-					<string>AddAssetsToAlbumIntent</string>
-					<key>ActionRequiresAppInstallation</key>
-					<true/>
-				</dict>
-				<key>assets</key>
+				<key>WFInput</key>
 				<dict>
 					<key>Value</key>
 					<dict>
@@ -322,22 +255,27 @@ var markTmpl = template.Must(template.New("mark").Funcs(template.FuncMap{"x": xm
 					<key>WFSerializationType</key>
 					<string>WFTextTokenAttachment</string>
 				</dict>
-				<key>album</key>
+				<key>WFRemoveAlbumSelectedGroup</key>
+				<string>{{x .Album}}</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>WFWorkflowActionIdentifier</key>
+			<string>` + SaveToAlbumActionID + `</string>
+			<key>WFWorkflowActionParameters</key>
+			<dict>
+				<key>WFCameraRollSelectedGroup</key>
+				<string>{{x .Album}}</string>
+				<key>WFInput</key>
 				<dict>
 					<key>Value</key>
 					<dict>
-						<key>OutputName</key>
-						<string>Albums</string>
-						<key>OutputUUID</key>
-						<string>` + findAlbumsUUID + `</string>
 						<key>Type</key>
-						<string>ActionOutput</string>
+						<string>ExtensionInput</string>
 					</dict>
 					<key>WFSerializationType</key>
 					<string>WFTextTokenAttachment</string>
 				</dict>
-				<key>UUID</key>
-				<string>` + addToAlbumUUID + `</string>
 			</dict>
 		</dict>
 		<dict>
