@@ -16,19 +16,41 @@ import (
 // ClaudeEnv overrides the claude binary (tests point it at a stub).
 const ClaudeEnv = "LONGFORM_CLAUDE"
 
+// ClaudeModelEnv overrides the model the editorial session runs on.
+const ClaudeModelEnv = "LONGFORM_CLAUDE_MODEL"
+
+// DefaultClaudeModel is the claude CLI alias that tracks the current Opus.
+const DefaultClaudeModel = "opus"
+
+// SessionModelKey is the job.extra key recording the model passed to claude.
+const SessionModelKey = "session_model"
+
 // ErrNotClipped is returned when launch-session runs before clips exist.
 var ErrNotClipped = errors.New("job is not clipped yet")
 
 // LaunchOptions tunes LaunchSession.
 type LaunchOptions struct {
 	Claude string           // path to claude; default LONGFORM_CLAUDE, PATH, ~/.local/bin/claude
+	Model  string           // claude --model; default LONGFORM_CLAUDE_MODEL, then DefaultClaudeModel
 	Force  bool             // relaunch even if already launched or not clipped
 	Now    func() time.Time // default time.Now
 }
 
-// LaunchSession starts `claude -p "/longform-pipeline:longform-publish <jobdir>"` detached,
-// with stdout at LogRoot()/<id>.session.json and stderr at <id>.session.err,
-// and records pid and start time in job.extra. It returns false without
+// SessionModel resolves the model for the editorial session: the explicit
+// value, else $LONGFORM_CLAUDE_MODEL, else DefaultClaudeModel.
+func SessionModel(explicit string) string {
+	if m := strings.TrimSpace(explicit); m != "" {
+		return m
+	}
+	if m := strings.TrimSpace(os.Getenv(ClaudeModelEnv)); m != "" {
+		return m
+	}
+	return DefaultClaudeModel
+}
+
+// LaunchSession starts `claude -p "/longform-pipeline:longform-publish <jobdir>" --model <m>`
+// detached, with stdout at LogRoot()/<id>.session.json and stderr at
+// <id>.session.err, and records pid, start time and model in job.extra. It returns false without
 // launching when the job already has a session (idempotent).
 func LaunchSession(j *model.Job, opts LaunchOptions) (bool, error) {
 	if SessionLaunched(j) && !opts.Force {
@@ -88,7 +110,9 @@ func LaunchSession(j *model.Job, opts LaunchOptions) (bool, error) {
 	}
 	// Plugin skills are invoked with the plugin prefix (a bare /longform-pipeline:longform-publish
 	// returns "Unknown command", as the first launchd run showed).
+	sessionModel := SessionModel(opts.Model)
 	cmd := exec.Command(claude, "-p", "/longform-pipeline:longform-publish "+j.Dir(),
+		"--model", sessionModel,
 		"--permission-mode", "acceptEdits",
 		"--allowedTools", strings.Join(allowed, ","),
 		"--output-format", "json")
@@ -105,6 +129,7 @@ func LaunchSession(j *model.Job, opts LaunchOptions) (bool, error) {
 		j.Extra = map[string]any{}
 	}
 	j.Extra[SessionLaunchedKey] = opts.Now().UTC().Format(time.RFC3339)
+	j.Extra[SessionModelKey] = sessionModel
 	j.Extra["session_pid"] = cmd.Process.Pid
 	j.Extra["session_stdout"] = outPath
 	j.Extra["session_stderr"] = errPath

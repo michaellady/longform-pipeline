@@ -52,13 +52,20 @@ macOS notifications fire regardless.
 1. **Record** in the iPhone's standard Video mode. Portrait or landscape as the
    profile says (vertical for a walking monologue, horizontal for a class),
    1080p at 30 fps, one take. If a take is bad, re-record; there is no edit step.
-2. **Share → "Mark for <Brand>"** (for example "Mark for EVC"), or in Photos
-   Share → Add to Album → the profile's album. That is the whole hand-off: one
-   tap, nothing is copied on the phone, and iCloud Photos uploads the recording
-   in the background. For a stitch profile (several clips per class segment,
-   joined into one video; sandbox-bjj, for example) add all of a class's clips
-   to the album; the Mac waits until every one of them has arrived, then
-   stages and stitches them into one job.
+2. **In Photos, Share → Add to Album → the profile's album** (for example
+   `longform-evc`). That is the whole hand-off: it is instant whatever the
+   length, nothing is exported or copied on the phone, and iCloud Photos
+   uploads the recording in the background. For a stitch profile (several
+   clips per class segment, joined into one video; sandbox-bjj, for example)
+   select all of a class's clips and add them to the album in one go; the Mac
+   waits until every one of them has arrived, then stages and stitches them
+   into one job.
+
+   Optional one-tap variant: **Share → "Mark for <Brand>"** (for example "Mark
+   for EVC") does the same from the Share sheet's shortcut row. Any shortcut
+   run from the Share sheet makes Photos export the whole video first, so
+   "Preparing…" spins for minutes on a long recording; that spinner is the
+   export, not a hang. Prefer Add to Album for anything long.
 
    Fallback: **Share → "Send to <Brand> inbox"** copies the file into the
    iCloud Drive inbox instead. Use it when the profile has no album, or when a
