@@ -1,0 +1,216 @@
+{
+  "probe": "publish-schedules read-back",
+  "date": "2026-10-25",
+  "question": "Can the REST key read a publish schedule back, so `longform monitor` can verify every scheduleId the manifest recorded?",
+  "how": "A throwaway Go probe (GET only, no credits spent) against https://api.opus.pro with OPUSCLIP_API_KEY from ~/.config/longform-pipeline/env, used only in the Authorization header. Bodies are the real responses scrubbed of the key and of signed URLs; strings longer than 80 characters are cut to keep the file small, and list responses keep their first entries plus the counts. No Authorization header, key or token is stored.",
+  "docs": {
+    "sources": [
+      "https://help.opus.pro/llms.txt",
+      "https://help.opus.pro/api-reference/endpoints/social-posting/overview",
+      "~/.claude/plugins/cache/opus-skills/opusclip/2.2.5/references/api-reference.md"
+    ],
+    "finding": "The documented publish-schedules operations are POST (create) and DELETE /{scheduleId} (cancel) only. No GET is documented; the 400 below names two undocumented list modes."
+  },
+  "attempts": [
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules/1779159097402OmCL-FACEBOOK_PAGE",
+      "status": 404,
+      "body": {
+        "message": "Cannot GET /api/publish-schedules/1779159097402OmCL-FACEBOOK_PAGE",
+        "error": "Not Found",
+        "statusCode": 404
+      },
+      "at": "2026-10-25T22:41:29Z"
+    },
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules?projectId=P3102517uJJi",
+      "status": 400,
+      "body": {
+        "errorMessage": "unsupported q parameter: 'undefined'. Supported values: byPage, findByProject...",
+        "errorName": "BadRequestError"
+      },
+      "at": "2026-10-25T22:41:31Z"
+    },
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules?q=findByProjectId&projectId=P3102517uJJi",
+      "status": 400,
+      "body": {
+        "errorMessage": "unsupported q parameter: 'findByProjectId'. Supported values: byPage, findByP...",
+        "errorName": "BadRequestError"
+      },
+      "at": "2026-10-25T22:41:33Z"
+    },
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules?q=mine",
+      "status": 400,
+      "body": {
+        "errorMessage": "unsupported q parameter: 'mine'. Supported values: byPage, findByProjectAndClip",
+        "errorName": "BadRequestError"
+      },
+      "at": "2026-10-25T22:41:34Z"
+    },
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules",
+      "status": 400,
+      "body": {
+        "errorMessage": "unsupported q parameter: 'undefined'. Supported values: byPage, findByProject...",
+        "errorName": "BadRequestError"
+      },
+      "at": "2026-10-25T22:41:36Z"
+    },
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules?q=byPage",
+      "status": 200,
+      "body": {
+        "data": {
+          "data": [
+            {
+              "scheduleId": "1732468679556yo0v-TWITTER",
+              "extUserId": "mikelady_",
+              "extOrgId": null,
+              "platform": "TWITTER",
+              "postDetail": {
+                "title": "Unlock Your Potential: Life Lessons for Success\n#PersonalDevelopment #LifeLes...",
+                "thumbnailUrl": null
+              },
+              "publishAt": "2024-11-25T17:00:00.000Z"
+            },
+            {
+              "scheduleId": "1757886380611Exj8-INSTAGRAM_BUSINESS",
+              "extUserId": "17841400738667117",
+              "extOrgId": "9771739099612678",
+              "platform": "INSTAGRAM_BUSINESS",
+              "postDetail": {
+                "title": "Jiu-Jitsu: Train Hard on What You Want to Improve!",
+                "thumbnailUrl": null
+              },
+              "publishAt": "2025-10-27T16:00:00.000Z"
+            }
+          ],
+          "meta": {
+            "page": "1771255414743V8EL-FACEBOOK_PAGE",
+            "nextPage": "1757886380611Exj8-INSTAGRAM_BUSINESS",
+            "total": 73
+          }
+        }
+      },
+      "at": "2026-10-25T22:41:47Z",
+      "note": "first 2 of the 73 entries kept; meta.total 73 = every entry returned in this one call"
+    },
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules?q=findByProjectAndClip&projectId=P3102517uJJi&clipId=c486ee767f",
+      "status": 200,
+      "body": {
+        "data": []
+      },
+      "at": "2026-10-25T22:41:49Z",
+      "note": "the full-video clip of the real job 2026-10-25-evc-6bad99dd, never scheduled: 200 with an empty list, not a 404"
+    },
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules?q=findByProjectAndClip&projectId=P30122131P0V&clipId=7wWDLGwoZM",
+      "status": 200,
+      "body": {
+        "data": [
+          {
+            "scheduleId": "1771352426007qJ8C-YOUTUBE",
+            "extUserId": "UCyxYcJWs5WstpM2h8KjabUw",
+            "extOrgId": null,
+            "platform": "YOUTUBE",
+            "postDetail": {
+              "title": "Whisperflow: My Favorite Speech-to-Text App! #shorts",
+              "custom": {
+                "description": "Whisperflow is my go-to for AI-assisted coding. Get a free month with my invi...",
+                "privacy": "public"
+              },
+              "thumbnailUrl": null
+            },
+            "publishAt": "2026-02-19T04:00:00.000Z"
+          },
+          {
+            "scheduleId": "177135242600745pA-LINKEDIN",
+            "extUserId": "9mS0FNJDCZ",
+            "extOrgId": "urn:li:organization:109952978",
+            "platform": "LINKEDIN",
+            "postDetail": {
+              "title": "Whisperflow: My Favorite Speech-to-Text App!",
+              "custom": {
+                "description": "I'm shilling my go-to AI speech-to-text app, Whisperflow. Get a free month wh..."
+              },
+              "thumbnailUrl": null
+            },
+            "publishAt": "2026-02-19T04:00:00.000Z"
+          },
+          {
+            "scheduleId": "1771352426007AHTL-FACEBOOK_PAGE",
+            "extUserId": "10160172472816623",
+            "extOrgId": "913906768469231",
+            "platform": "FACEBOOK_PAGE",
+            "postDetail": {
+              "title": "Whisperflow: My Favorite Speech-to-Text App!",
+              "custom": {
+                "description": "I'm shilling Whisperflow, my go-to speech-to-text app. Use my invite code for..."
+              },
+              "thumbnailUrl": null
+            },
+            "publishAt": "2026-02-19T04:00:00.000Z"
+          },
+          {
+            "scheduleId": "1771352426007EcxU-INSTAGRAM_BUSINESS",
+            "extUserId": "17841463373309509",
+            "extOrgId": "24853184384364156",
+            "platform": "INSTAGRAM_BUSINESS",
+            "postDetail": {
+              "title": "Whisperflow: My Favorite Speech-to-Text App!",
+              "custom": {
+                "description": "Choosing your AI speech text app. Whisperflow is a solid pick, and you both g..."
+              },
+              "thumbnailUrl": null
+            },
+            "publishAt": "2026-02-19T04:00:00.000Z"
+          }
+        ]
+      },
+      "at": "2026-10-25T22:44:42Z",
+      "note": "a clip with 4 pending schedules (publishAt 2026-02-19, in the past, still status scheduled in the connector): all 4 listed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules?q=findByProjectAndClip&projectId=P30122170hWd&clipId=h25EHhZKgK",
+      "status": 200,
+      "body": {
+        "data": []
+      },
+      "at": "2026-10-25T22:44:44Z",
+      "note": "a clip whose 5 schedules all posted on 2026-02-05 (connector status posted, post_url set): REST returns none"
+    },
+    {
+      "method": "GET",
+      "path": "/api/publish-schedules?q=findByProjectAndClip&projectId=P30122131P0V",
+      "status": 200,
+      "body": {
+        "data": "52 entries (elided)"
+      },
+      "at": "2026-10-25T22:44:45Z",
+      "note": "clipId omitted: every pending schedule of the project; 52 = the connector count of status scheduled for this project (72 posted are absent)"
+    }
+  ],
+  "cross_check": {
+    "tool": "claude.ai OpusClip connector, opusclip_list_scheduled_posts (startAt 2026-02-01, endAt 2026-03-01), read-only",
+    "result": "987 posts: 916 posted, 71 scheduled. Every schedule REST returns for P30122131P0V is status scheduled there; the posted schedules of P30122170hWd.h25EHhZKgK (status posted, post_url set) are absent from REST. The connector carries project_id, clip_id, status (scheduled|posted|failed), post_url and failure_reason; REST carries none of status, post_url or failure_reason."
+  },
+  "interpretation": {
+    "read_endpoint": "GET /api/publish-schedules?q=findByProjectAndClip&projectId=P&clipId=C -> 200 {data: [{scheduleId, extUserId, extOrgId, platform, postDetail{title, custom{description, privacy}, thumbnailUrl}, publishAt}]}. clipId is optional (omitted = the whole project). Undocumented; named by the API itself in the 400 for an unknown q.",
+    "list_endpoint": "GET /api/publish-schedules?q=byPage -> 200 {data: {data: [...same entries...], meta: {page, nextPage, total}}}: every pending schedule of the organisation. The cursor semantics are unclear (one call returned all 73 while nextPage was set), so the pipeline does not use it.",
+    "by_id": "GET /api/publish-schedules/{id} does not exist (404 Cannot GET, a route miss, not a missing schedule).",
+    "semantics": "The read endpoints list schedules that are still pending (status scheduled), whatever their publishAt: stale February 2026 schedules that never fired are still listed. A schedule that has posted is no longer listed, and REST has no status, post_url or failure_reason, so it cannot tell posted from failed or cancelled.",
+    "implication": "longform monitor verifies over REST that every OpusClip scheduleId whose publish time is still ahead is pending (findByProjectAndClip once per clip). A scheduleId that is absent after its publish time is recorded as not_pending (left the queue: posted, failed or cancelled; REST cannot tell) and is not counted as verified. Whether a post actually went out is the human check through the connector (opusclip_list_scheduled_posts). Buffer statics are checked against the manifest only."
+  }
+}

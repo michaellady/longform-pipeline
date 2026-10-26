@@ -49,8 +49,11 @@ The e2e test never touches `~/.config/longform-pipeline`, `~/Library/Application
 9. `gate validate`: exit 0.
 10. `opus schedule --cells`: one JSON line per cell with `response.data.scheduleId`; the fake saw one `POST /publish-schedules` per cell paced at no faster than 1 req/s.
 11. `manifest init` then `manifest append-post --file <jsonl>`: `manifest.json` has one `scheduled_posts` entry per cell with a `schedule_id` the fake actually issued.
-12. `status --json` lists the job.
-13. The fake never saw an `Authorization` value other than `Bearer test` on any `/api` request.
+12. `manifest seal --job`: state `scheduled`, `extra.scheduled_at` set, the draft's one held clip (score 64) entered the manifest as `held`; a second run is a no-op.
+13. `watch --once --profile evc --stable-seconds 0` (the real driver, with `LONGFORM_CLAUDE` pointed at `true` so its `launch-session` starts nothing): it runs `monitor`, which reads every schedule back with `GET /publish-schedules?q=findByProjectAndClip` (state `monitored`, `extra.monitor.method` `opusclip-rest`, `pending` equal to the cell count, every post's `check.status` `pending` with the fake's entry verbatim in `check.response`), then `manifest expire` and `close` (both exit 0; `logs/monitor.log`, `expire.log`, `close.log` exist). `monitor` again is a no-op.
+14. Backlog, with the clock moved 26 days ahead through `--now` (the profile's `backlog_days` is 25): `close` exits 0 but leaves the job `monitored` while the held clip is unexpired ("1 held clips"); `manifest expire --now` expires it; `close --now` moves the job to `closed` with `extra.closed_at` equal to that time.
+15. `status --json` lists the job.
+16. The fake never saw an `Authorization` value other than `Bearer test` on any `/api` request, the schedule reads included.
 
 Every subprocess failure is reported with the command line, exit code, stdout and stderr. A subcommand the binary does not know yet (exit 64, `unknown command`) turns into a `t.Skip` naming the command, so the test is informative before the subcommand branches merge.
 
@@ -59,8 +62,8 @@ Every subprocess failure is reported with the command line, exit code, stdout an
 A green run prints one `$ longform <args> -> exit 0` line per step, the fake's request log lines (`fakeopus: POST /api/clip-projects -> 201` and so on), and ends with:
 
 ```
-    e2e_test.go:NNN: pipeline complete: job 2026-10-21-evc-<hash8> reached scheduled with 4 scheduled posts; fake served NN requests
---- PASS: TestPipeline (4x.xxs)
+    e2e_test.go:NNN: pipeline complete: job 2026-10-21-evc-<hash8> reached closed with 4 scheduled posts; fake served NN requests
+--- PASS: TestPipeline (12x.xxs)
 PASS
 ok      github.com/michaellady/longform-pipeline/internal/e2e   4x.xxxs
 ```
@@ -101,6 +104,7 @@ Shapes mirror `references/api-reference.md` and the jq paths in the `opusclip` C
 - `GET /exportable-clips/P.C?include=editingScript` → the clip plus `editingScript.tracks[]` (`KeyFrameTrack`, `CaptionTrack` with per-word `textElements`, `EmojiTrack`, `TextOverlayTrack`).
 - `POST /exportable-clips/P.C/re-render` → `{jobId}`; the clip reports `renderAsVideoFile.pending: true` for one processing delay.
 - `POST /publish-schedules` → 201 `{data: {scheduleId}}`; 400 when `projectId`, `clipId`, `postAccountId`, `publishAt` (RFC3339) or `postDetail` is missing. `DELETE /publish-schedules/ID` → `{data: ID}`.
+- `GET /publish-schedules?q=findByProjectAndClip&projectId=P[&clipId=C]` → `{data: [{scheduleId, extUserId, extOrgId, platform, postDetail{title, custom, thumbnailUrl}, publishAt}]}` and `?q=byPage` → `{data: {data: [...], meta: {page, nextPage, total}}}`, the shapes the 2026-10-25 probe read from the real API. Like the real list it holds only pending schedules: one whose `publishAt` has passed is treated as posted and drops out; `DropSchedule(id)` removes one early. Any other `q` → 400 naming the two supported values; `GET /publish-schedules/ID` → 404 `Cannot GET` (no read by id on the real API either).
 - `GET /social-accounts?q=mine` → four accounts including `acc-yt` (YOUTUBE) and `acc-ig` (INSTAGRAM_BUSINESS, sub `ig-sub-1`); `GET /brand-templates?q=mine` → two templates.
 - Every `/api` request without exactly `Authorization: Bearer <key>` → 401. `Inject429(n)` makes the next n `/api` requests return 429 with `Retry-After: 1`.
 - The request log keeps method, path, query, headers (Authorization replaced by `<redacted>`), body (PUT bodies as `<N bytes>`), status, and `auth_matched`.
@@ -108,7 +112,9 @@ Shapes mirror `references/api-reference.md` and the jq paths in the `opusclip` C
 ## Known gaps
 
 - Transcription runs only when `LONGFORM_WHISPER_MODEL` is set; otherwise `prepare` runs with `LONGFORM_SKIP_TRANSCRIBE=1` and the censor pass has no words to match. The censor list format and the skip switch follow the `prepare` contract as stated by its author (`{"schema_version":"1","words":[...]}`; `LONGFORM_SKIP_TRANSCRIBE=1`).
-- Not exercised: HDR tonemapping, `vidstab`, BJJ stitching, the `strip_overlay` re-render pass (the fake supports it; the profile in the test has it off), Buffer statics, Slack and macOS notifications, native YouTube posting, `/yt-launch`, the `monitored` verification tick, backlog expiry.
-- The fake implements `findByProjectId` only; `findByCollectionId`, collections, censor jobs and social-copy jobs return 404.
+- Not exercised: HDR tonemapping, `vidstab`, BJJ stitching, the `strip_overlay` re-render pass (the fake supports it; the profile in the test has it off), Buffer statics (and so `manifest_only` checks and seal's Buffer `post_id` path, which unit tests in `internal/lifecycle` cover), Slack and macOS notifications, native YouTube posting, `/yt-launch`.
+- The `monitored` check and backlog expiry run against the fake only. Live, `longform monitor` was run once (2026-10-25) on a scratch copy of a real job against the real API: a real pending scheduleId read back `pending` (and `overdue`: a February schedule that never fired), a made-up one with a future time failed with exit 70. Never exercised live: a schedule this pipeline created being read back, the transition of a real post from `pending` to gone after it publishes (the fake models it from `publishAt`), and anything about whether a post actually went out, which the REST key cannot see (the claude.ai connector's `opusclip_list_scheduled_posts` can).
+- `stage` waits its default 60-second stability window in the e2e run (twice), which is most of the test's two minutes.
+- On `/exportable-clips` the fake implements `findByProjectId` only; `findByCollectionId`, collections, censor jobs and social-copy jobs return 404.
 - The harness codes against the CLI contract in the plan, not against the subcommand implementations, which were written in parallel. Where the contract left a choice (`slots propose` output on stdout vs in place; `manifest append-post` reading the `opus schedule` JSON lines verbatim) the test accepts the documented alternatives; anything else is a real contract mismatch and should be fixed in the subcommand, not papered over here.
 - The 1 req/s pacing assertion tolerates 900 ms between schedule calls to allow for scheduler jitter.

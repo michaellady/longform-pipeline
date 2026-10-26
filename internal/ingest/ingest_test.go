@@ -60,7 +60,12 @@ func helperMain(args []string) int {
 	if len(args) < 2 {
 		return 64
 	}
-	cmd, dir := args[0], args[1]
+	// The job dir is the last argument; `manifest expire --job <dir>` is
+	// recorded as "manifest expire".
+	cmd, dir := args[0], args[len(args)-1]
+	if cmd == "manifest" {
+		cmd += " " + args[1]
+	}
 	if f := os.Getenv("LONGFORM_TEST_CALLS"); f != "" {
 		fh, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
@@ -90,6 +95,19 @@ func helperMain(args []string) int {
 		}
 		j.Extra[SessionLaunchedKey] = time.Now().UTC().Format(time.RFC3339)
 		err = j.Save()
+	case "monitor":
+		if code := os.Getenv("LONGFORM_TEST_MONITOR_EXIT"); code != "" {
+			n, _ := strconv.Atoi(code)
+			return n
+		}
+		err = j.Advance(model.StateMonitored, cmd, "")
+	case "manifest expire":
+	case "close":
+		// Closes only when the test says the backlog is over; otherwise
+		// exits 0 and leaves the state, like the real command does.
+		if os.Getenv("LONGFORM_TEST_BACKLOG_OVER") == "1" {
+			err = j.Advance(model.StateClosed, cmd, "")
+		}
 	default:
 		return 64
 	}

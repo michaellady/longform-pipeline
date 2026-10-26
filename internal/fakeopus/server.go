@@ -20,6 +20,14 @@
 //   - GET  /api/exportable-clips/P.C?include=editingScript -> clip + editingScript
 //   - POST /api/exportable-clips/P.C/re-render -> {jobId}
 //   - POST /api/publish-schedules       -> 201 {data: {scheduleId}}
+//   - GET  /api/publish-schedules?q=findByProjectAndClip&projectId=P[&clipId=C]
+//     -> {data: [{scheduleId, extUserId, extOrgId, platform, postDetail, publishAt}]}
+//     (undocumented, probed 2026-10-25): only schedules still pending. A
+//     schedule whose publishAt has passed counts as posted and drops out, as
+//     on the real API; DropSchedule removes one early.
+//   - GET  /api/publish-schedules?q=byPage -> {data: {data: [...], meta: {page, nextPage, total}}}
+//   - GET  /api/publish-schedules?q=<other> -> 400 naming the supported values
+//   - GET  /api/publish-schedules/ID    -> 404 "Cannot GET" (no read by id)
 //   - DELETE /api/publish-schedules/ID  -> {data: ID}
 //   - GET  /api/social-accounts?q=mine  -> {data: [...]}
 //   - GET  /api/brand-templates?q=mine  -> {data: [...]}
@@ -291,6 +299,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/exportable-clips/{full}", s.handleGetClip)
 	m.HandleFunc("POST /api/exportable-clips/{full}/re-render", s.handleReRender)
 	m.HandleFunc("POST /api/publish-schedules", s.handleSchedule)
+	m.HandleFunc("GET /api/publish-schedules", s.handleListSchedules)
+	m.HandleFunc("GET /api/publish-schedules/{id}", s.handleGetScheduleByID)
 	m.HandleFunc("DELETE /api/publish-schedules/{id}", s.handleCancelSchedule)
 	m.HandleFunc("GET /api/social-accounts", s.handleSocialAccounts)
 	m.HandleFunc("GET /api/brand-templates", s.handleBrandTemplates)
@@ -717,13 +727,119 @@ func (s *Server) handleCancelSchedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"data": id})
 }
 
+// socialAccounts is what GET /social-accounts?q=mine returns; the schedule
+// listing reads platform and extUserId from it by postAccountId.
+var socialAccounts = []map[string]any{
+	{"postAccountId": "acc-yt", "subAccountId": "", "platform": "YOUTUBE", "extUserId": "UCfake", "extUserName": "Fake Channel", "extUserPictureLink": "", "extUserProfileLink": "https://youtube.com/@fake"},
+	{"postAccountId": "acc-ig", "subAccountId": "ig-sub-1", "platform": "INSTAGRAM_BUSINESS", "extUserId": "17841400000", "extUserName": "fake.ig", "extUserPictureLink": "", "extUserProfileLink": "https://instagram.com/fake.ig"},
+	{"postAccountId": "acc-li", "subAccountId": "li-sub-1", "platform": "LINKEDIN", "extUserId": "li-1", "extUserName": "Fake Person", "extUserPictureLink": "", "extUserProfileLink": "https://linkedin.com/in/fake"},
+	{"postAccountId": "acc-tt", "subAccountId": "", "platform": "TIKTOK_BUSINESS", "extUserId": "tt-1", "extUserName": "fake.tt", "extUserPictureLink": "", "extUserProfileLink": "https://tiktok.com/@fake"},
+}
+
+// DropSchedule removes a schedule as if OpusClip had dropped it, so tests can
+// see a scheduleId stop resolving before its publish time. Returns false
+// when the id is unknown.
+func (s *Server) DropSchedule(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.schedules[id]
+	delete(s.schedules, id)
+	return ok
+}
+
+// pendingSchedules renders every schedule still pending (publishAt in the
+// future) that matches project and clip ("" = any), in the real list shape,
+// ordered by publishAt then id. The caller must not hold s.mu.
+func (s *Server) pendingSchedules(project, clip string) []map[string]any {
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	type row struct {
+		at  time.Time
+		id  string
+		out map[string]any
+	}
+	var rows []row
+	for id, req := range s.schedules {
+		pid, _ := req["projectId"].(string)
+		cid, _ := req["clipId"].(string)
+		if (project != "" && pid != project) || (clip != "" && cid != clip) {
+			continue
+		}
+		atStr, _ := req["publishAt"].(string)
+		at, err := time.Parse(time.RFC3339, atStr)
+		if err != nil || !at.After(now) {
+			continue // posted: the real API stops listing it
+		}
+		acct, _ := req["postAccountId"].(string)
+		sub, _ := req["subAccountId"].(string)
+		platform, extUser := "UNKNOWN", acct
+		for _, a := range socialAccounts {
+			if a["postAccountId"] == acct {
+				platform, _ = a["platform"].(string)
+				extUser, _ = a["extUserId"].(string)
+			}
+		}
+		var extOrg any
+		if sub != "" {
+			extOrg = sub
+		}
+		detail := map[string]any{"title": "", "thumbnailUrl": nil}
+		if pd, ok := req["postDetail"].(map[string]any); ok {
+			detail["title"] = pd["title"]
+			if c, ok := pd["custom"]; ok {
+				detail["custom"] = c
+			}
+		}
+		rows = append(rows, row{at, id, map[string]any{
+			"scheduleId": id, "extUserId": extUser, "extOrgId": extOrg, "platform": platform,
+			"postDetail": detail, "publishAt": at.UTC().Format("2006-01-02T15:04:05.000Z"),
+		}})
+	}
+	for i := 1; i < len(rows); i++ {
+		for j := i; j > 0 && (rows[j].at.Before(rows[j-1].at) || (rows[j].at.Equal(rows[j-1].at) && rows[j].id < rows[j-1].id)); j-- {
+			rows[j], rows[j-1] = rows[j-1], rows[j]
+		}
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.out)
+	}
+	return out
+}
+
+func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	switch q.Get("q") {
+	case "findByProjectAndClip":
+		if q.Get("projectId") == "" {
+			writeJSON(w, 400, map[string]any{"errorMessage": "projectId is required", "errorName": "BadRequestError"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"data": s.pendingSchedules(q.Get("projectId"), q.Get("clipId"))})
+	case "byPage":
+		all := s.pendingSchedules("", "")
+		var page any
+		if len(all) > 0 {
+			page = all[0]["scheduleId"]
+		}
+		writeJSON(w, 200, map[string]any{"data": map[string]any{"data": all, "meta": map[string]any{"page": page, "nextPage": nil, "total": len(all)}}})
+	default:
+		v := q.Get("q")
+		if v == "" {
+			v = "undefined"
+		}
+		writeJSON(w, 400, map[string]any{"errorMessage": fmt.Sprintf("unsupported q parameter: '%s'. Supported values: byPage, findByProjectAndClip", v), "errorName": "BadRequestError"})
+	}
+}
+
+// handleGetScheduleByID mirrors the real route miss: there is no read by id.
+func (s *Server) handleGetScheduleByID(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 404, map[string]any{"message": "Cannot GET " + r.URL.Path, "error": "Not Found", "statusCode": 404})
+}
+
 func (s *Server) handleSocialAccounts(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"data": []map[string]any{
-		{"postAccountId": "acc-yt", "subAccountId": "", "platform": "YOUTUBE", "extUserId": "UCfake", "extUserName": "Fake Channel", "extUserPictureLink": "", "extUserProfileLink": "https://youtube.com/@fake"},
-		{"postAccountId": "acc-ig", "subAccountId": "ig-sub-1", "platform": "INSTAGRAM_BUSINESS", "extUserId": "17841400000", "extUserName": "fake.ig", "extUserPictureLink": "", "extUserProfileLink": "https://instagram.com/fake.ig"},
-		{"postAccountId": "acc-li", "subAccountId": "li-sub-1", "platform": "LINKEDIN", "extUserId": "li-1", "extUserName": "Fake Person", "extUserPictureLink": "", "extUserProfileLink": "https://linkedin.com/in/fake"},
-		{"postAccountId": "acc-tt", "subAccountId": "", "platform": "TIKTOK_BUSINESS", "extUserId": "tt-1", "extUserName": "fake.tt", "extUserPictureLink": "", "extUserProfileLink": "https://tiktok.com/@fake"},
-	}})
+	writeJSON(w, 200, map[string]any{"data": socialAccounts})
 }
 
 func (s *Server) handleBrandTemplates(w http.ResponseWriter, r *http.Request) {

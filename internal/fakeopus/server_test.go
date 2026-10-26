@@ -238,3 +238,77 @@ func TestTitleDeclaresDuration(t *testing.T) {
 		}
 	}
 }
+
+// TestScheduleListing covers the read-back routes monitor depends on: only
+// pending schedules are listed, a past publishAt or a drop removes one, an
+// unknown q is a 400 naming the supported values, and there is no read by id.
+func TestScheduleListing(t *testing.T) {
+	s := New(Options{})
+	api, err := s.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	future := time.Now().Add(48 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	past := time.Now().Add(-time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	schedule := func(clip, acct, sub, at string) string {
+		body := `{"projectId":"P1","clipId":"` + clip + `","postAccountId":"` + acct + `","subAccountId":"` + sub + `","publishAt":"` + at + `","postDetail":{"title":"T","custom":{"description":"D"}}}`
+		resp, b := do(t, "POST", api+"/publish-schedules", []byte(body), auth())
+		if resp.StatusCode != 201 {
+			t.Fatalf("schedule: %d %s", resp.StatusCode, b)
+		}
+		var r struct {
+			Data struct {
+				ScheduleID string `json:"scheduleId"`
+			} `json:"data"`
+		}
+		_ = json.Unmarshal(b, &r)
+		return r.Data.ScheduleID
+	}
+	yt := schedule("C1", "acc-yt", "", future)
+	ig := schedule("C1", "acc-ig", "ig-sub-1", future)
+	gone := schedule("C1", "acc-yt", "", past)
+	other := schedule("C2", "acc-yt", "", future)
+
+	list := func(query string) (int, []map[string]any, []byte) {
+		resp, b := do(t, "GET", api+"/publish-schedules?"+query, nil, auth())
+		var r struct {
+			Data []map[string]any `json:"data"`
+		}
+		_ = json.Unmarshal(b, &r)
+		return resp.StatusCode, r.Data, b
+	}
+	code, data, raw := list("q=findByProjectAndClip&projectId=P1&clipId=C1")
+	if code != 200 || len(data) != 2 {
+		t.Fatalf("C1: %d %s", code, raw)
+	}
+	ids := map[string]map[string]any{}
+	for _, d := range data {
+		ids[d["scheduleId"].(string)] = d
+	}
+	if ids[yt] == nil || ids[ig] == nil || ids[gone] != nil || ids[other] != nil {
+		t.Fatalf("C1 listing = %s", raw)
+	}
+	if ids[yt]["platform"] != "YOUTUBE" || ids[ig]["platform"] != "INSTAGRAM_BUSINESS" || ids[ig]["extOrgId"] != "ig-sub-1" || ids[yt]["extOrgId"] != nil {
+		t.Fatalf("entry shape = %s", raw)
+	}
+	if _, _, raw := list("q=findByProjectAndClip&projectId=P1"); !strings.Contains(string(raw), other) {
+		t.Fatalf("project-wide listing misses C2: %s", raw)
+	}
+	if !s.DropSchedule(yt) || s.DropSchedule("nope") {
+		t.Fatal("DropSchedule")
+	}
+	if _, data, raw := list("q=findByProjectAndClip&projectId=P1&clipId=C1"); len(data) != 1 || data[0]["scheduleId"] != ig {
+		t.Fatalf("after drop: %s", raw)
+	}
+	resp, b := do(t, "GET", api+"/publish-schedules?q=byPage", nil, auth())
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"total":2`) {
+		t.Fatalf("byPage: %d %s", resp.StatusCode, b)
+	}
+	if code, _, raw := list("q=mine"); code != 400 || !strings.Contains(string(raw), "findByProjectAndClip") {
+		t.Fatalf("unknown q: %d %s", code, raw)
+	}
+	if resp, b := do(t, "GET", api+"/publish-schedules/"+ig, nil, auth()); resp.StatusCode != 404 || !strings.Contains(string(b), "Cannot GET") {
+		t.Fatalf("read by id: %d %s", resp.StatusCode, b)
+	}
+}

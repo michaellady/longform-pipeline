@@ -86,7 +86,11 @@ detected → staged → prepared → uploaded → clipped → drafted → approv
 ```
 
 The binary owns every transition. The skill writes one file, `review/draft.json`, and
-asks the binary to render the brief and parse your decision.
+asks the binary to render the brief and parse your decision. After approval,
+`longform manifest seal` moves a job to `scheduled` once every approved post is on
+record; the watcher's `longform monitor` reads each OpusClip schedule back
+(`monitored`), and `longform close` ends the job when the backlog window is over
+(`closed`).
 
 ## Non-negotiables
 

@@ -221,9 +221,12 @@ func (d *Driver) Pass(profile string, opts Options) error {
 
 // Drive advances every job that is not yet clipped through prepare, upload
 // and wait, stopping a job at the first step that fails or does not advance,
-// and launches the editorial session once for every clipped job. Jobs are
-// processed oldest first; a profile with a job between uploaded and clipped
-// does not start another upload.
+// and launches the editorial session once for every clipped job. Past
+// approval it runs monitor on a scheduled job, and manifest expire then close
+// on a monitored one; an approved job (the approval phase never sealed) is
+// only logged. Jobs are processed oldest first; a profile with a job between
+// uploaded and clipped does not start another upload. Failures are logged,
+// never returned.
 func (d *Driver) Drive(jobs []*model.Job) {
 	sort.SliceStable(jobs, func(i, k int) bool {
 		if !jobs[i].CreatedAt.Equal(jobs[k].CreatedAt) {
@@ -275,7 +278,51 @@ func (d *Driver) Drive(jobs []*model.Job) {
 				d.logf("watch: job %s: session launched", j.ID)
 			}
 		}
+		jobs[i] = d.afterApproval(j)
 	}
+}
+
+// afterApproval drives the states past approval: a scheduled job is
+// monitored, then a monitored job has its backlog expired and is closed once
+// the window is over (close exiting 0 without advancing is the normal case
+// for weeks). An approved job means the approval phase stopped before
+// `manifest seal`; the watcher cannot finish it and says so once per pass.
+func (d *Driver) afterApproval(j *model.Job) *model.Job {
+	switch j.State {
+	case model.StateApproved:
+		d.logf("watch: job %s is approved but not sealed; re-run the approval phase, resuming at longform manifest seal --job %s (it lists the cells still to post)", j.ID, j.Dir())
+		return j
+	case model.StateScheduled:
+		j = d.hop(j, "monitor", []string{"monitor", j.Dir()}, model.StateMonitored)
+	}
+	if j.State != model.StateMonitored {
+		return j
+	}
+	code, err := d.runArgs(j, "expire", "manifest", "expire", "--job", j.Dir())
+	if err != nil || code != 0 {
+		d.logf("watch: job %s: manifest expire exited %d (%v); see %s", j.ID, code, err, j.Path(filepath.Join("logs", "expire.log")))
+		return j
+	}
+	// Staying monitored is the normal answer for weeks; close.log says why,
+	// and the watcher's own log only gets the transition.
+	return d.hop(j, "close", []string{"close", j.Dir()}, model.StateClosed)
+}
+
+// hop runs one post-approval command, reloads the job and logs the outcome.
+// A command that exits 0 without reaching to is not an error here (close
+// waits out the backlog that way).
+func (d *Driver) hop(j *model.Job, logName string, args []string, to model.State) *model.Job {
+	code, err := d.runArgs(j, logName, args...)
+	if nj, lerr := model.LoadJob(j.Dir()); lerr == nil {
+		j = nj
+	}
+	switch {
+	case err != nil || code != 0:
+		d.logf("watch: job %s: %s exited %d (%v); see %s", j.ID, logName, code, err, j.Path(filepath.Join("logs", logName+".log")))
+	case j.State == to:
+		d.logf("watch: job %s: %s -> %s", j.ID, logName, j.State)
+	}
+	return j
 }
 
 // SessionLaunched reports whether launch-session already ran for the job.
@@ -301,7 +348,13 @@ func (d *Driver) inFlight(jobs []*model.Job, self int) bool {
 // run execs `<self> <cmd> <jobdir>` with stdout and stderr appended to
 // <jobdir>/logs/<cmd>.log and returns the exit code.
 func (d *Driver) run(j *model.Job, cmd string) (int, error) {
-	logPath := j.Path(filepath.Join("logs", cmd+".log"))
+	return d.runArgs(j, cmd, cmd, j.Dir())
+}
+
+// runArgs execs `<self> <args...>` with stdout and stderr appended to
+// <jobdir>/logs/<logName>.log and returns the exit code.
+func (d *Driver) runArgs(j *model.Job, logName string, args ...string) (int, error) {
+	logPath := j.Path(filepath.Join("logs", logName+".log"))
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return -1, err
 	}
@@ -310,8 +363,8 @@ func (d *Driver) run(j *model.Job, cmd string) (int, error) {
 		return -1, err
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "=== %s longform %s %s\n", time.Now().UTC().Format(time.RFC3339), cmd, j.Dir())
-	c := exec.Command(d.Self, cmd, j.Dir())
+	fmt.Fprintf(f, "=== %s longform %s\n", time.Now().UTC().Format(time.RFC3339), strings.Join(args, " "))
+	c := exec.Command(d.Self, args...)
 	c.Stdout, c.Stderr = f, f
 	c.Env = os.Environ()
 	err = c.Run()

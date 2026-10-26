@@ -125,3 +125,48 @@ func (c *Client) SocialCopy(ctx context.Context, req SocialCopyRequest) (json.Ra
 func (c *Client) SocialCopyResult(ctx context.Context, jobID string) (json.RawMessage, error) {
 	return c.get(ctx, "/social-copy-jobs/"+url.PathEscape(jobID))
 }
+
+// PendingSchedule is one entry of GET /publish-schedules?q=findByProjectAndClip.
+// The endpoint is undocumented; the API names it (with q=byPage) in its 400
+// for an unknown q (probed 2026-10-25, docs/probes/2026-10-25-publish-schedules-read.json).
+// It lists only schedules still pending: once a post goes out the schedule
+// leaves the list, and the response carries no status, post URL or failure
+// reason, so "absent" never tells posted from failed or cancelled.
+type PendingSchedule struct {
+	ScheduleID string          `json:"scheduleId"`
+	Platform   string          `json:"platform"`
+	PublishAt  string          `json:"publishAt"`
+	ExtUserID  string          `json:"extUserId"`
+	ExtOrgID   string          `json:"extOrgId"`
+	Raw        json.RawMessage `json:"-"`
+}
+
+// ClipSchedules lists the pending publish schedules of one clip (clipID ""
+// lists the whole project). Each entry keeps its verbatim JSON in Raw.
+func (c *Client) ClipSchedules(ctx context.Context, projectID, clipID string) ([]PendingSchedule, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("opusclip: ClipSchedules: projectId is required")
+	}
+	q := url.Values{"q": {"findByProjectAndClip"}, "projectId": {projectID}}
+	if clipID != "" {
+		q.Set("clipId", clipID)
+	}
+	raw, err := c.get(ctx, "/publish-schedules?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(unwrapData(raw), &items); err != nil {
+		return nil, fmt.Errorf("opusclip: decode publish schedules: %w (%s)", err, snippet(raw, 200))
+	}
+	out := make([]PendingSchedule, 0, len(items))
+	for _, it := range items {
+		var s PendingSchedule
+		if err := json.Unmarshal(it, &s); err != nil {
+			return nil, fmt.Errorf("opusclip: decode publish schedule: %w (%s)", err, snippet(it, 200))
+		}
+		s.Raw = it
+		out = append(out, s)
+	}
+	return out, nil
+}

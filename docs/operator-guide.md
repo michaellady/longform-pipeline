@@ -97,6 +97,37 @@ Nothing posts until step 5. After approval the schedule is enforced by the
 gates (platform caps, cadence, profanity in titles), the manifest records every
 scheduled post, and the weekly flywheel measures the result.
 
+## What happens after approval
+
+You do nothing more; this is what the Mac does, and the one check that is
+yours.
+
+1. **Approval ends with a seal.** The approval session schedules every post,
+   then checks that each one has a confirmation on file. If any post is
+   missing it stops and lists them, and the job stays "approved" until they
+   are posted (or you tell Claude to skip them). When everything is on file
+   the job becomes "scheduled" and you get a notification.
+2. **The Mac checks the schedule with OpusClip.** Within ten minutes the
+   watcher asks OpusClip for each scheduled post and records the answer next
+   to it. If OpusClip no longer has a post that should still be waiting, you
+   get one notification ("scheduled posts cannot be found in OpusClip"), the
+   job stays "scheduled", and the Mac keeps checking every ten minutes. If
+   everything is there the job becomes "monitored".
+3. **Held clips wait, then expire.** Clips you held back stay in the backlog
+   for the profile's `backlog_days` (25 by default). After that they expire
+   and the job is "closed". A closed job is finished; nothing more happens to
+   it.
+
+**What the Mac cannot check, and how you check it.** OpusClip's key-based
+access can only see posts that are still waiting. Once a post's time has
+passed, it cannot tell whether the post went out or failed, and it cannot see
+Buffer (the image posts) at all. So after a post's time, look yourself: in a
+Claude session ask "list my OpusClip scheduled posts for <job>" (the OpusClip
+connector's `opusclip_list_scheduled_posts` shows each post as scheduled,
+posted or failed, with the link and the failure reason), and look at the
+Buffer queue for the image posts. The check runs once per job, right after
+approval, so it confirms the schedule exists, not that each post went out.
+
 ## Suggested first run
 
 Record a two-minute spoken test rather than a full video. When its brief
@@ -121,3 +152,14 @@ test job.
   `logs/upload.log`: the env file is missing; re-run wizard stage 3.
 - The brief says a platform was skipped: that platform has no account id in the
   profile; connect it in OpusClip and re-run the wizard.
+- A job stays `approved` and `watch.err.log` says "approved but not sealed":
+  the approval session stopped before its last step. Ask Claude to resume the
+  approval for that job; it runs `longform manifest seal --job <jobdir>`
+  first, which lists exactly the posts still missing, and schedules only those.
+- A "monitor_failed" notification, or a job stuck at `scheduled`:
+  `logs/monitor.log` in the job folder names each post OpusClip no longer has.
+  Check them with the OpusClip connector (`opusclip_list_scheduled_posts`),
+  re-schedule the missing ones from a Claude session, and the next pass moves
+  the job on. A warning that a post is "still pending over an hour after its
+  publish time" means OpusClip never sent it; reconnect that social account in
+  OpusClip.

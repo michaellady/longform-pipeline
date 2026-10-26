@@ -25,7 +25,8 @@ const usage = `usage: longform manifest <sub> --job <jobdir> [flags]
   conflicts
   schedule-ids
   list-by-channel <label substring>
-  expire          --days N [--now RFC3339]
+  expire          [--days N] [--now RFC3339]   (--days defaults to the job profile's backlog_days)
+  seal            [--allow-missing] [--now RFC3339]   (approved -> scheduled; see docs/cli-contract.md)
 --manifest <path> overrides <jobdir>/manifest.json.`
 
 // Main is the `longform manifest <sub>` entry point. Exit 0 ok, 64 usage,
@@ -60,7 +61,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// append-post
 	file := fs.String("file", "", "JSON lines file instead of stdin")
 	// expire
-	days := fs.Int("days", 0, "age in days after which held clips expire")
+	days := fs.Int("days", -1, "age in days after which held clips expire (default: the job profile's backlog_days)")
 	nowFlag := fs.String("now", "", "override the clock (RFC3339)")
 
 	// list-by-channel takes a positional needle; let flags come first or last.
@@ -197,12 +198,19 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		_ = enc.Encode(m.ListByChannel(strings.Join(positional, " ")))
 		return 0
 	case "expire":
-		if *days <= 0 {
-			fmt.Fprintln(stderr, "manifest expire: --days N (>0) required")
-			return 64
+		n := *days
+		if n < 0 {
+			if *jobDir == "" {
+				fmt.Fprintln(stderr, "manifest expire: --days N is required without --job (the job's profile supplies backlog_days)")
+				return 64
+			}
+			var code int
+			if n, code = profileBacklogDays(*jobDir, stderr); code != 0 {
+				return code
+			}
 		}
 		fallback := curationFallback(*jobDir, m)
-		expired := m.Expire(*days, fallback, now)
+		expired := m.Expire(n, fallback, now)
 		if len(expired) > 0 {
 			if err := m.Save(path); err != nil {
 				fmt.Fprintln(stderr, "manifest:", err)
@@ -213,12 +221,28 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			expired = []Clip{}
 		}
 		_ = enc.Encode(expired)
-		fmt.Fprintf(stderr, "manifest: expired %d held clips older than %d days\n", len(expired), *days)
+		fmt.Fprintf(stderr, "manifest: expired %d held clips older than %d days (%d still held)\n", len(expired), n, len(m.HeldClips()))
 		return 0
 	default:
 		fmt.Fprintf(stderr, "manifest: unknown subcommand %q\n%s\n", sub, usage)
 		return 64
 	}
+}
+
+// profileBacklogDays reads backlog_days from the profile the job names
+// (LoadProfile applies the default of 25 when the file leaves it 0).
+func profileBacklogDays(jobDir string, stderr io.Writer) (int, int) {
+	j, err := model.LoadJob(jobDir)
+	if err != nil {
+		fmt.Fprintln(stderr, "manifest expire:", err)
+		return 0, 65
+	}
+	p, err := model.LoadProfile(j.Profile)
+	if err != nil {
+		fmt.Fprintln(stderr, "manifest expire: profile:", err)
+		return 0, 65
+	}
+	return p.BacklogDays, 0
 }
 
 // appendLines reads JSON lines ({cell, response, error}) and appends each.

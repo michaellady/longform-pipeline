@@ -1,6 +1,7 @@
 // Package e2e drives one job through the real `longform` binary against the
-// fake OpusClip server, from a dropped fixture file to a populated
-// manifest.json. It is gated by LONGFORM_E2E=1 because it builds the binary,
+// fake OpusClip server, from a dropped fixture file through a populated
+// manifest.json, the seal, the watcher's monitor pass and backlog expiry to
+// a closed job. It is gated by LONGFORM_E2E=1 because it builds the binary,
 // shells out to ffmpeg, and takes tens of seconds.
 //
 //	LONGFORM_E2E=1 go test ./internal/e2e/ -run TestPipeline -v
@@ -67,6 +68,7 @@ func (h *harness) run(args ...string) result {
 	cmd.Dir = h.root
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
+	start := time.Now()
 	err := cmd.Run()
 	r := result{args: args, stdout: out.String(), stderr: errb.String(), err: err}
 	if ee, ok := err.(*exec.ExitError); ok {
@@ -74,7 +76,7 @@ func (h *harness) run(args ...string) result {
 	} else if err != nil {
 		r.code = -1
 	}
-	h.t.Logf("$ longform %s -> exit %d", strings.Join(args, " "), r.code)
+	h.t.Logf("$ longform %s -> exit %d (%s)", strings.Join(args, " "), r.code, time.Since(start).Round(10*time.Millisecond))
 	return r
 }
 
@@ -251,6 +253,13 @@ func newHarness(t *testing.T) *harness {
 		"HOME="+root, // keep any stray ~ expansion inside the sandbox
 		"PATH="+os.Getenv("PATH")+":/opt/homebrew/bin",
 	)
+	// `watch --once` launches the editorial session for a job that never had
+	// one; point it at a no-op so the test never starts a real claude.
+	if stub, err := exec.LookPath("true"); err == nil {
+		h.env = append(h.env, "LONGFORM_CLAUDE="+stub)
+	} else {
+		t.Skip("no `true` binary to stub claude with")
+	}
 	if os.Getenv("LONGFORM_WHISPER_MODEL") == "" {
 		h.env = append(h.env, "LONGFORM_SKIP_TRANSCRIBE=1")
 		t.Log("LONGFORM_WHISPER_MODEL unset: running prepare with LONGFORM_SKIP_TRANSCRIBE=1 (transcript will be empty)")
@@ -595,6 +604,102 @@ func TestPipeline(t *testing.T) {
 		if _, ok := h.fake.Schedules()[id]; !ok {
 			t.Fatalf("manifest scheduled_posts[%d].schedule_id %q was never issued by the fake", i, id)
 		}
+	}
+
+	// --- manifest seal (approved -> scheduled) -------------------------------
+	h.mustOK("manifest", "seal", "--job", jobDir)
+	j = h.wantState(jobDir, model.StateScheduled)
+	if s, _ := j.Extra["scheduled_at"].(string); s == "" {
+		t.Fatalf("seal must record extra.scheduled_at: %v", j.Extra)
+	}
+	h.mustOK("manifest", "seal", "--job", jobDir) // idempotent
+	var heldIDs []string
+	for _, c := range clips.Clips {
+		if c.ProjectID == clips.ShortsProjectID && c.Score < 70 {
+			heldIDs = append(heldIDs, c.ClipID)
+		}
+	}
+	var sealed struct {
+		Clips []struct {
+			ClipID         string `json:"clip_id"`
+			Status         string `json:"status"`
+			ScheduledPosts []struct {
+				ScheduleID string `json:"schedule_id"`
+				Check      *struct {
+					Method   string          `json:"method"`
+					Status   string          `json:"status"`
+					Response json.RawMessage `json:"response"`
+				} `json:"check"`
+			} `json:"scheduled_posts"`
+		} `json:"clips"`
+	}
+	readJSON(t, manifestPath, &sealed)
+	held := 0
+	for _, c := range sealed.Clips {
+		if c.Status == "held" {
+			held++
+			if len(heldIDs) != 1 || c.ClipID != heldIDs[0] {
+				t.Fatalf("held clip %s, want the draft's held clip %v", c.ClipID, heldIDs)
+			}
+		}
+	}
+	if held != 1 {
+		t.Fatalf("seal should record the draft's one held clip in the backlog, got %d", held)
+	}
+
+	// --- watch --once: monitor (scheduled -> monitored), expire, close -------
+	// The pass also runs launch-session for this job (it was never launched),
+	// so the claude binary is a stub.
+	before = len(h.fake.RequestsMatching("GET", "/api/publish-schedules"))
+	h.mustOK("watch", "--once", "--profile", "evc", "--stable-seconds", "0")
+	j = h.wantState(jobDir, model.StateMonitored)
+	mon, _ := j.Extra["monitor"].(map[string]any)
+	if mon["method"] != "opusclip-rest" || mon["pending"] != float64(len(cells)) || j.Extra["monitored_at"] == nil {
+		t.Fatalf("monitor record: %v", j.Extra)
+	}
+	reads := h.fake.RequestsMatching("GET", "/api/publish-schedules")[before:]
+	if len(reads) == 0 {
+		t.Fatal("monitor never read the schedules back")
+	}
+	for _, r := range reads {
+		if !strings.Contains(r.Query, "q=findByProjectAndClip") || r.Status != 200 {
+			t.Fatalf("unexpected schedule read: %s?%s -> %d", r.Path, r.Query, r.Status)
+		}
+	}
+	readJSON(t, manifestPath, &sealed)
+	for _, c := range sealed.Clips {
+		for _, p := range c.ScheduledPosts {
+			var entry struct {
+				ScheduleID string `json:"scheduleId"`
+			}
+			if p.Check == nil || p.Check.Status != "pending" || p.Check.Method != "opusclip-rest" || json.Unmarshal(p.Check.Response, &entry) != nil || entry.ScheduleID != p.ScheduleID {
+				t.Fatalf("post %s: check %+v", p.ScheduleID, p.Check)
+			}
+		}
+	}
+	for _, name := range []string{"monitor", "expire", "close"} {
+		b, err := os.ReadFile(filepath.Join(jobDir, "logs", name+".log"))
+		if err != nil || !strings.Contains(string(b), "=== exit 0") {
+			t.Fatalf("watch should have run %s with exit 0: %v\n%s", name, err, b)
+		}
+	}
+	h.mustOK("monitor", jobDir) // idempotent
+
+	// --- backlog: the clock is moved past backlog_days (25) ------------------
+	later := time.Now().Add(26 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	r = h.mustOK("close", "--job", jobDir, "--now", later)
+	h.wantState(jobDir, model.StateMonitored)
+	if !strings.Contains(r.stderr, "1 held clips") {
+		t.Fatalf("close must wait while a held clip is unexpired:\n%s", r)
+	}
+	r = h.mustOK("manifest", "expire", "--job", jobDir, "--now", later)
+	if !strings.Contains(r.stdout, heldIDs[0]) {
+		t.Fatalf("expire should expire the held clip %s:\n%s", heldIDs[0], r)
+	}
+	h.mustOK("close", "--job", jobDir, "--now", later)
+	j = h.wantState(jobDir, model.StateClosed)
+	if j.Extra["closed_at"] != later {
+		t.Fatalf("closed_at = %v, want %s", j.Extra["closed_at"], later)
 	}
 
 	// --- status ------------------------------------------------------------

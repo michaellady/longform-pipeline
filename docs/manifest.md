@@ -32,14 +32,23 @@ shape is the vendored one plus the fields marked *new*. Every write is atomic
       "scheduled_posts": [
         {
           "clip_id": "La4Wghg6IX",            // new (redundant with the parent, kept for flat consumers)
+          "project_id": "P3051823ab0w",       // new: the cell's project, so monitor can read the schedule back
           "label": "FACEBOOK_PAGE Enterprise Vibe Code",
           "platform": "facebook",             // new
           "account_id": "6946d924a163ebb2222f505b",
           "sub_account_id": "913906768469231",
+          "transport": "buffer",              // new, optional: absent = OpusClip; "buffer" for a static
           "scheduled_at_utc": "2026-05-19T16:00:00Z",
           "api_response": { "data": { "scheduleId": "1779159097402OmCL-FACEBOOK_PAGE", "hasConflict": false } },
-          "schedule_id": "1779159097402OmCL-FACEBOOK_PAGE",   // new: extracted from api_response.data.scheduleId
-          "error": "429 rate limited"         // new, only when the schedule call failed
+          "schedule_id": "1779159097402OmCL-FACEBOOK_PAGE",   // new: the line's post_id, else api_response.data.scheduleId, else the line's schedule_id
+          "error": "429 rate limited",        // new, only when the schedule call failed
+          "check": {                          // new: the last `longform monitor` verdict
+            "checked_at": "2026-05-19T00:10:00Z",
+            "method": "opusclip-rest",        // or manifest-only (Buffer)
+            "status": "pending",              // pending | not_pending | missing | replaced | manifest_only
+            "note": "...",                    // optional
+            "response": { "scheduleId": "1779159097402OmCL-FACEBOOK_PAGE", "platform": "FACEBOOK_PAGE", "publishAt": "2026-05-19T16:00:00.000Z", "...": "..." }
+          }
         }
       ]
     }
@@ -59,15 +68,18 @@ All take `--job <jobdir>` (or `--manifest <path>` to name the file directly).
 |---|---|---|
 | `init [--project ID] [--source-video ID] [--source-title T] [--source-url U] [--duration-seconds N] [--profile P] [--force]` | create the manifest; idempotent unless `--force` | — |
 | `ensure-clip --clip-id ID [--title T] [--description D] [--score N] [--duration-sec N] [--theme S] [--status post\|held] [--curated-at RFC3339]` | add a clip entry if missing; existing entries are untouched | — |
-| `append-post [--file lines.jsonl]` | read the JSON lines `longform opus schedule` emits (`{"cell": <cell>, "response": <verbatim>, "error": "..."}`) from stdin or `--file`; ensure each clip from its cell; append one scheduled post per line with the response verbatim and `schedule_id` extracted | — |
+| `append-post [--file lines.jsonl]` | read the JSON lines `longform opus schedule` emits (`{"cell": <cell>, "schedule_id": "...", "response": <verbatim>, "error": "..."}`) from stdin or `--file`; ensure each clip from its cell; append one scheduled post per line with the response verbatim, the cell's `project_id`, and `schedule_id` = the line's `post_id`, else `response.data.scheduleId`, else the line's `schedule_id` (none when `error` is set). A Buffer static's line adds `"transport":"buffer","post_id":"<Buffer post id>"`: the Buffer reply shape is not wired into the binary, so the skill names the id | — |
 | `count-scheduled` | total (clip × channel) records (`0` when no manifest) | integer |
 | `find-clip --clip-id ID` | one clip's full record; exit 65 when absent | JSON object |
 | `conflicts` | posts whose `api_response.data.hasConflict` is true (LinkedIn reports a structural false positive because its org page and person profile share one `postAccountId`; treat LinkedIn conflicts as advisory) | JSON array (with `clip_title`) |
 | `schedule-ids` | every schedule id, one per line; feeds batch-cancel loops | lines |
 | `list-by-channel <label substring>` | posts whose label contains the substring (case-insensitive) | JSON array (with `clip_title`) |
-| `expire --days N [--now RFC3339]` | mark held clips older than N days as `expired`, persist, print them | JSON array |
+| `expire [--days N] [--now RFC3339]` | mark held clips older than N days as `expired`, persist, print them; without `--days` N is the job profile's `backlog_days` (needs `--job`) | JSON array |
+| `seal [--allow-missing] [--now RFC3339]` | `approved -> scheduled` once every approved cell has a recorded post; adds the backlog's clips as `held`; exit 65 lists missing cells (see `cli-contract.md`) | result JSON, or verdict lines |
 
-`expire` dates a held clip by `clips[].curated_at`, else the job's
+Held clips enter the manifest at `seal` (the draft's `held` clips and the
+rows `approve except` held) or through `ensure-clip --status held`. `expire`
+dates a held clip by `clips[].curated_at`, else the job's
 `clips.json` `curated_at`/`created_at`, else `job.json` `created_at`, else the
 manifest's `created_at`.
 

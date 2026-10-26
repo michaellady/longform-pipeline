@@ -65,17 +65,43 @@ type Clip struct {
 // ScheduledPost is one (clip × channel) schedule record. api_response is the
 // scheduler's reply verbatim; schedule_id is extracted from
 // response.data.scheduleId at append time so readers need not know the
-// scheduler's shape.
+// scheduler's shape. For a Buffer post (transport "buffer") schedule_id holds
+// the Buffer post id the appending line named in post_id.
 type ScheduledPost struct {
 	ClipID         string          `json:"clip_id"`
+	ProjectID      string          `json:"project_id,omitempty"`
 	Label          string          `json:"label"`
 	Platform       string          `json:"platform,omitempty"`
 	AccountID      string          `json:"account_id,omitempty"`
 	SubAccountID   string          `json:"sub_account_id,omitempty"`
+	Transport      string          `json:"transport,omitempty"` // "" = OpusClip; "buffer"
 	ScheduledAtUTC string          `json:"scheduled_at_utc"`
 	APIResponse    json.RawMessage `json:"api_response,omitempty"`
 	ScheduleID     string          `json:"schedule_id,omitempty"`
 	Error          string          `json:"error,omitempty"`
+	Check          *PostCheck      `json:"check,omitempty"`
+}
+
+// Transports a scheduled post can name.
+const (
+	TransportOpusClip = "opusclip"
+	TransportBuffer   = "buffer"
+)
+
+// IsOpusClip reports whether the post went through the OpusClip scheduler
+// (an empty transport is OpusClip: every line before transport existed was).
+func (p ScheduledPost) IsOpusClip() bool {
+	return p.Transport == "" || p.Transport == TransportOpusClip
+}
+
+// PostCheck is the last `longform monitor` verdict on one post. response is
+// the scheduler's list entry for the schedule, verbatim, when one was found.
+type PostCheck struct {
+	CheckedAt string          `json:"checked_at"`
+	Method    string          `json:"method"` // opusclip-rest | manifest-only
+	Status    string          `json:"status"` // pending | not_pending | missing | replaced | manifest_only
+	Note      string          `json:"note,omitempty"`
+	Response  json.RawMessage `json:"response,omitempty"`
 }
 
 // PathIn is the manifest file inside a job directory.
@@ -209,11 +235,17 @@ func ExtractScheduleID(raw json.RawMessage) string {
 	return r.Data.ScheduleID
 }
 
-// ScheduleLine is one JSON line emitted by `longform opus schedule`.
+// ScheduleLine is one JSON line emitted by `longform opus schedule`, or
+// written by the skill for a Buffer post: {"cell", "response",
+// "transport":"buffer", "post_id":"<Buffer post id>"}. The Buffer response
+// shape is not wired here (it was never probed); the skill names the id.
 type ScheduleLine struct {
-	Cell     gates.Cell      `json:"cell"`
-	Response json.RawMessage `json:"response"`
-	Error    string          `json:"error,omitempty"`
+	Cell       gates.Cell      `json:"cell"`
+	Response   json.RawMessage `json:"response"`
+	Error      string          `json:"error,omitempty"`
+	ScheduleID string          `json:"schedule_id,omitempty"` // `opus schedule` echoes it
+	Transport  string          `json:"transport,omitempty"`   // "" | opusclip | buffer
+	PostID     string          `json:"post_id,omitempty"`     // explicit id; wins over the response
 }
 
 // AppendScheduleLine turns a schedule line into a clip entry (ensured from
@@ -223,16 +255,34 @@ func (m *Manifest) AppendScheduleLine(l ScheduleLine) error {
 		return errors.New("schedule line has no cell.clip_id")
 	}
 	m.EnsureClip(Clip{ClipID: l.Cell.ClipID, Title: l.Cell.Title, Description: l.Cell.Description, DurationSec: l.Cell.DurationSec})
+	id := l.PostID
+	if id == "" && l.Error == "" {
+		id = l.ScheduleID
+	}
 	return m.AppendPost(ScheduledPost{
 		ClipID:         l.Cell.ClipID,
+		ProjectID:      l.Cell.ProjectID,
 		Label:          l.Cell.Label,
 		Platform:       gates.PlatformOf(l.Cell),
 		AccountID:      l.Cell.AccountID,
 		SubAccountID:   l.Cell.SubAccountID,
+		Transport:      l.Transport,
 		ScheduledAtUTC: l.Cell.PublishAt,
 		APIResponse:    l.Response,
+		ScheduleID:     id,
 		Error:          l.Error,
 	})
+}
+
+// HeldClips returns the clips still waiting in the backlog (status held).
+func (m *Manifest) HeldClips() []Clip {
+	var out []Clip
+	for _, c := range m.Clips {
+		if c.Status == StatusHeld {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // CountScheduled is the total number of (clip × channel) records.
