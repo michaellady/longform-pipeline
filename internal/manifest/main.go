@@ -19,7 +19,7 @@ import (
 const usage = `usage: longform manifest <sub> --job <jobdir> [flags]
   init            [--project ID] [--source-video ID] [--source-title T] [--source-url U] [--duration-seconds N] [--profile P] [--force]
   ensure-clip     --clip-id ID [--title T] [--description D] [--score N] [--duration-sec N] [--theme S] [--status post|held] [--curated-at RFC3339]
-  append-post     [--file lines.jsonl]   (JSON lines {cell, response, error} from stdin by default)
+  append-post     [--file lines.jsonl]   (JSON lines {cell, response, error} from stdin by default; a line whose id is already recorded is ignored)
   count-scheduled
   find-clip       --clip-id ID
   conflicts
@@ -156,7 +156,23 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			defer f.Close()
 			in = f
 		}
-		n, err := appendLines(m, in)
+		lines, err := readLines(in)
+		if err != nil {
+			fmt.Fprintln(stderr, "manifest append-post:", err)
+			return 65
+		}
+		// Re-read once the input has ended: `opus schedule --job` records
+		// each post itself while its stdout is piped here, so the copy
+		// loaded before stdin was read is stale and saving it would drop
+		// those records.
+		if m, err = Load(path); err != nil {
+			fmt.Fprintln(stderr, "manifest:", err)
+			return 65
+		}
+		n, dups, err := applyLines(m, lines)
+		for _, id := range dups {
+			fmt.Fprintf(stderr, "append-post: duplicate %s ignored\n", id)
+		}
 		if err != nil {
 			fmt.Fprintln(stderr, "manifest append-post:", err)
 			return 65
@@ -245,11 +261,27 @@ func profileBacklogDays(jobDir string, stderr io.Writer) (int, int) {
 	return p.BacklogDays, 0
 }
 
-// appendLines reads JSON lines ({cell, response, error}) and appends each.
-func appendLines(m *Manifest, r io.Reader) (int, error) {
+// appendLines reads JSON lines ({cell, response, error}) and appends each
+// (readLines, then applyLines).
+func appendLines(m *Manifest, r io.Reader) (n int, dups []string, err error) {
+	lines, err := readLines(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	return applyLines(m, lines)
+}
+
+// numberedLine is one parsed input line and its 1-based line number.
+type numberedLine struct {
+	no int
+	l  ScheduleLine
+}
+
+// readLines parses every non-blank JSON line of r.
+func readLines(r io.Reader) ([]numberedLine, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
-	n := 0
+	var out []numberedLine
 	for lineNo := 1; sc.Scan(); lineNo++ {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
@@ -257,14 +289,29 @@ func appendLines(m *Manifest, r io.Reader) (int, error) {
 		}
 		var l ScheduleLine
 		if err := json.Unmarshal([]byte(line), &l); err != nil {
-			return n, fmt.Errorf("line %d: %w", lineNo, err)
+			return nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
-		if err := m.AppendScheduleLine(l); err != nil {
-			return n, fmt.Errorf("line %d: %w", lineNo, err)
+		out = append(out, numberedLine{lineNo, l})
+	}
+	return out, sc.Err()
+}
+
+// applyLines appends each line. A line whose id (post_id or schedule id) is
+// already recorded, earlier in the manifest or earlier in this input, is not
+// appended again; its id is returned in dups. Lines without an id (failed
+// calls) always append.
+func applyLines(m *Manifest, lines []numberedLine) (n int, dups []string, err error) {
+	for _, nl := range lines {
+		if id := nl.l.RecordedID(); m.HasScheduleID(id) {
+			dups = append(dups, id)
+			continue
+		}
+		if err := m.AppendScheduleLine(nl.l); err != nil {
+			return n, dups, fmt.Errorf("line %d: %w", nl.no, err)
 		}
 		n++
 	}
-	return n, sc.Err()
+	return n, dups, nil
 }
 
 // curationFallback is the clip age reference when a clip has no curated_at:

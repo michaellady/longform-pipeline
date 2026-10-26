@@ -366,17 +366,11 @@ func DeriveSchedule(job *model.Job, prof *model.Profile, d *Draft, rec *Decision
 			if held(p) {
 				continue
 			}
-			acct := ""
-			if prof != nil {
-				acct = prof.Buffer.Channels[p]
-				if acct == "" {
-					// Buffer channels are keyed by family (linkedin, not linkedin_page).
-					if fam, _, ok := strings.Cut(p, "_"); ok {
-						acct = prof.Buffer.Channels[fam]
-					}
-				}
-			}
-			sch.Cells = append(sch.Cells, ScheduleCell{Kind: "static", ClipID: s.ID, ProjectID: "", Platform: p, AccountID: acct, Title: "", Description: s.Caption, Hashtags: []string{}, DurationSec: 0, PublishAt: "", Label: fmt.Sprintf("static %s (%s)", s.ID, s.Format)})
+			acct := prof.BufferChannel(p) // exact key, else family (linkedin for linkedin_page)
+			// The caption is the post text: title, like every non-YouTube
+			// clip cell (the gate requires a title on every platform), and
+			// description too, where YouTube and Pinterest read post text.
+			sch.Cells = append(sch.Cells, ScheduleCell{Kind: "static", ClipID: s.ID, ProjectID: "", Platform: p, AccountID: acct, Title: s.Caption, Description: s.Caption, Hashtags: []string{}, DurationSec: 0, PublishAt: "", Label: fmt.Sprintf("static %s (%s)", s.ID, s.Format)})
 		}
 	}
 	return sch

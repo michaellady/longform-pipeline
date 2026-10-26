@@ -62,14 +62,14 @@ func toFloat(v any) (float64, bool) {
 
 // AccountFor is the profile's account id for a cell's transport: OpusClip's
 // postAccountId for clips and the full video, the Buffer channel id for
-// statics. Empty means the platform is not connected (probe: OpusClip had no
+// statics (model.Profile.BufferChannel: exact key, else family). Empty means the platform is not connected (probe: OpusClip had no
 // TikTok or X account), so nothing may be placed or fired there.
 func AccountFor(p *model.Profile, platform, kind string) string {
 	if p == nil {
 		return ""
 	}
 	if kind == KindStatic {
-		return p.Buffer.Channels[platform]
+		return p.BufferChannel(platform) // exact key, else family
 	}
 	return p.OpusClip.Accounts[platform]
 }

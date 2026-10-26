@@ -183,7 +183,7 @@ func TestAppendLineIDsTransportAndProject(t *testing.T) {
 {"cell":{"kind":"static","clip_id":"s1","platform":"facebook","label":"static s1 (quote)"},"response":{"ok":true},"transport":"buffer"}
 {"cell":{"kind":"clip","clip_id":"c1","project_id":"P9","platform":"youtube","label":"clip 1"},"schedule_id":"sched-top","response":{"weird":true}}
 {"cell":{"kind":"clip","clip_id":"c1","project_id":"P9","platform":"instagram","label":"clip 1"},"schedule_id":"ignored","error":"HTTP 400"}`
-	if n, err := appendLines(m, strings.NewReader(lines)); err != nil || n != 4 {
+	if n, dups, err := appendLines(m, strings.NewReader(lines)); err != nil || n != 4 || len(dups) != 0 {
 		t.Fatalf("append: %d %v", n, err)
 	}
 	s1, c1 := m.Find("s1").ScheduledPosts, m.Find("c1").ScheduledPosts

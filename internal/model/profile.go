@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Profile is everything brand-specific. The plugin ships no profile; the
@@ -117,6 +118,23 @@ type CopyConfig struct {
 type BufferConfig struct {
 	Channels map[string]string `json:"channels"` // platform -> channel id
 	Tags     map[string]string `json:"tags"`     // format key -> tag id
+}
+
+// BufferChannel is the Buffer channel id for a cell platform: the exact key
+// (linkedin_page), else its family, the part before the first "_"
+// (linkedin), else "". parse-decision fills static cells with it and the
+// gate checks them against it, so both read the profile the same way.
+func (p *Profile) BufferChannel(platform string) string {
+	if p == nil {
+		return ""
+	}
+	if id := p.Buffer.Channels[platform]; id != "" {
+		return id
+	}
+	if fam, _, ok := strings.Cut(platform, "_"); ok {
+		return p.Buffer.Channels[fam]
+	}
+	return ""
 }
 
 type StaticsConfig struct {
