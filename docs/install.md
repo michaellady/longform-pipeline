@@ -149,12 +149,12 @@ Every `longform` subcommand the skills and wizard call. Exit codes follow sysexi
 | `longform gate validate --profile <p> --cells <file>` | skill, approve | caps, durations, profanity, cadence; exit 0 or 65 with verdict JSON |
 | `longform opus accounts` | wizard stage 6 | list connected OpusClip social accounts and ids |
 | `longform opus usage` | skill, draft | running credit estimate (2 x source minutes per job); true balance via the MCP `opusclip_get_usage` |
-| `longform opus schedule --cells <file>` | skill, approve | `POST /publish-schedules` per cell at 1 req/s, verbatim responses on stdout |
+| `longform opus schedule --cells <file> --job <dir>` | skill, approve | `POST /publish-schedules` per OpusClip cell at 1 req/s (statics skipped: Buffer), verbatim responses on stdout; `--job` skips cells `manifest.json` already records and records each new post there as it is made |
 | `longform opus strip-overlay --project <id> --clip <id> [--wait] [--force]` | binary at `clipped`; skill if a clip still shows an overlay | free overlay-strip re-render per short; skips when no overlay is present |
 | `longform opus export` | you | export URLs for clips |
 | `longform manifest init --job <dir>` | skill, approve | create `manifest.json` |
 | `longform manifest ensure-clip --job <dir>` | skill, approve | add a clip entry if missing |
-| `longform manifest append-post --job <dir>` | skill, approve | append one verbatim API response (stdin); Buffer lines carry `"transport":"buffer","post_id":"..."` |
+| `longform manifest append-post --job <dir>` | skill, approve | append one verbatim API response (stdin); Buffer lines carry `"transport":"buffer","post_id":"..."`; an id already recorded is ignored |
 | `longform manifest seal --job <dir> [--allow-missing]` | skill, approve (last step) | check every approved cell has a recorded post, record the held clips, state `scheduled`; exit 65 lists the cells with no post |
 | `longform monitor <dir>` | watcher | read every OpusClip `scheduleId` back from OpusClip, record each in `manifest.json`, state `monitored`; exit 70 names the ids that did not resolve |
 | `longform manifest expire --job <dir>` | watcher | mark held clips older than the profile's `backlog_days` as expired |

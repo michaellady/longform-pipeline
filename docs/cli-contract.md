@@ -387,6 +387,23 @@ URL is a secret and is never printed.
 accepts nil for either argument and returns the joined channel errors for
 logging only.
 
+## `longform gate validate`
+
+The full check list is in `docs/cells-schema.md`. Two rules about static
+cells (`kind: "static"`, posted through Buffer):
+
+- A static needs no `publish_at`: it goes into the Buffer queue
+  (`mode: addToQueue`; D13, statics into the Buffer queue from day two).
+  One it does carry must still be RFC 3339 and in the future. Clip and
+  full-video cells always need one. Statics never count toward cadence.
+- A static's account is its Buffer channel, resolved by
+  `model.Profile.BufferChannel`: `buffer.channels[<platform>]`, else the
+  family key before the first `_` (`linkedin` for `linkedin_page` and
+  `linkedin_profile`). `brief parse-decision` fills `account_id` the same
+  way, so the two always agree.
+- `brief parse-decision` writes a static's caption as both `title` and
+  `description`, so the caps check passes it as written.
+
 ## Post-approval: `manifest seal`, `monitor`, `close`
 
 The approval phase of the `longform-publish` skill schedules every approved
@@ -395,6 +412,67 @@ statics through Buffer) and appends each response to `manifest.json`. These
 three commands then move the job through the last states, in
 `internal/lifecycle`. All three take the job dir as `--job <dir>` or as one
 positional argument, and `--now <RFC3339>` to override the clock (tests).
+
+### `longform opus schedule` and `longform manifest append-post`
+
+```
+longform opus schedule --cells <file|-> [--job <jobdir>] [--profile NAME] [--dry-run]
+longform manifest append-post --job <jobdir> [--file lines.jsonl]
+```
+
+The skill always runs `opus schedule --cells <jobdir>/review/schedule.json
+--job <jobdir>`, which records every post in `manifest.json` itself. Piping
+its stdout into `manifest append-post --job <jobdir>` is optional with
+`--job` and kept for backwards compatibility. `--cells` alone (no `--job`)
+still works, reads and writes no manifest, and posts every OpusClip cell;
+the fake-server checks and one-off re-schedules use that form.
+
+- `opus schedule` posts each cell with `POST /publish-schedules` at 1 req/s
+  and prints one JSON line per newly scheduled cell on stdout: `{"cell",
+  "schedule_id", "response"}` with the response verbatim, or `{"cell",
+  "error", "status"}` for a cell that failed (validation or API).
+- A cell with `kind: "static"` is never sent to OpusClip (statics go
+  through Buffer): stderr `schedule: static <clip_id> goes through Buffer,
+  skipped`, nothing on stdout, not a failure. This holds with or without
+  `--job`.
+- With `--job`, before posting it reads `<jobdir>/manifest.json` (absent =
+  nothing recorded; the directory itself must exist, else exit `65`) and
+  skips every cell that already has a recorded post by the rule seal checks
+  (`manifest.MatchCells`): not parked, same `clip_id` and platform (the
+  post's `platform`, else the one its label names), a non-empty
+  `schedule_id`, no `error`, each post standing for one cell only. A failed
+  attempt (`error`) or a post without an id does not count, so that cell is
+  posted again. A skipped cell prints nothing on stdout and one line on
+  stderr:
+  `schedule: skipped <label> on <platform>: already in manifest (<schedule_id>)`
+  (`<label>` falls back to `clip <clip_id>`).
+- With `--job`, each successful POST is recorded in `manifest.json`
+  (created as `manifest init` would when absent) before the next cell is
+  sent, through the same append logic as `append-post` (`manifest.RecordLine`):
+  the response verbatim, the cell's label, platform, project and duration,
+  and the account the request used. Failed cells are not recorded. A post
+  that cannot be recorded stops the run: its line is still printed, then
+  exit `70`. `--dry-run` sends and records nothing.
+- Every run ends with `schedule: <n> scheduled, <m> skipped` on stderr
+  (`<m>` counts statics and recorded cells; `, <k> failed` when cells
+  failed; `(dry run: nothing was sent)` with `--dry-run`).
+- Exit (`opus schedule`): `0` every cell posted or skipped, `64` usage
+  (no `--cells`, or a positional argument), `65` unreadable cells, profile,
+  `--job` directory or manifest, or at least one cell failed (its line is
+  still printed), `70` stdout or manifest write failure, `75` interrupted
+  (the summary is still printed).
+- `append-post` appends one scheduled post per line under its clip (see
+  `docs/manifest.md`). It reads its whole input first and only then loads
+  the manifest, so posts `opus schedule --job` recorded while its stdout
+  was piped in are kept. A line whose id (`post_id`, else `schedule_id`,
+  else `response.data.scheduleId`) is already recorded, in the manifest or
+  earlier in the same input, is not appended again: stderr
+  `append-post: duplicate <id> ignored`, exit `0`. A line without an id (a
+  failed call, a Buffer line without `post_id`) is appended as before.
+- Together: re-running the approval phase from the schedule step never
+  posts a cell OpusClip already accepted, crash or not; the only window
+  left is a process killed between OpusClip's reply and the manifest write
+  of that one cell.
 
 ### `longform manifest seal`
 
@@ -413,7 +491,8 @@ Run by the skill as the last approval step, before `notify --event scheduled`.
   OpusClip cell that id is the `scheduleId` from `opus schedule`; for a
   static it is the Buffer post id the skill wrote as `post_id` on the
   `append-post` line (`"transport":"buffer"`). Each post satisfies one cell
-  only, so a doubled append never hides a missing cell.
+  only, so a doubled append never hides a missing cell. This is
+  `manifest.MatchCells`, the same rule `opus schedule --job` skips by.
 - Missing cells and no `--allow-missing`: one verdict object per line on
   stdout, in the gate's style, then exit `65`; nothing is written:
 

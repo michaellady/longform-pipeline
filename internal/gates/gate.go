@@ -233,9 +233,11 @@ func censorVerdict(c Cell, platform, field, word string) Verdict {
 }
 
 // validateTiming is check (e): every non-held cell has a parseable
-// publish_at in the future.
+// publish_at in the future; a static may have none (Buffer queue).
 func validateTiming(c Cell, now time.Time) []Verdict {
-	if c.Parked() {
+	// A static goes into the Buffer queue (addToQueue), so it needs no
+	// publish time; one it does carry is still checked.
+	if c.Parked() || (c.Kind == KindStatic && c.PublishAt == "") {
 		return nil
 	}
 	platform := PlatformOf(c)

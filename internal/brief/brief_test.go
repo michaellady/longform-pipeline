@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/michaellady/longform-pipeline/internal/gates"
 	"github.com/michaellady/longform-pipeline/internal/model"
 )
 
@@ -327,7 +328,7 @@ func TestApplyDecisionAndSchedule(t *testing.T) {
 		case c.Kind == "clip" && c.ClipID == "c-late":
 			t.Errorf("row 3 should be held: %+v", c)
 		case c.Kind == "static" && c.ClipID == "s1":
-			if c.AccountID != "buf-ig" || c.Description != "A quote" || c.PublishAt != "" {
+			if c.AccountID != "buf-ig" || c.Title != "A quote" || c.Description != "A quote" || c.PublishAt != "" {
 				t.Errorf("static cell: %+v", c)
 			}
 		}
@@ -366,3 +367,65 @@ func TestLoadDraftRejectsBadStatus(t *testing.T) {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+// TestStaticCellCarriesCaptionAsTitleAndPassesGate: parse-decision writes a
+// static's caption as the cell title (every platform's constraints require a
+// title), no publish_at (Buffer queue) and the Buffer channel by exact key
+// else family, so `gate validate` passes the cells exactly as written.
+func TestStaticCellCarriesCaptionAsTitleAndPassesGate(t *testing.T) {
+	job, d := fixtureJob(t)
+	prof := testProfile()
+	if _, err := WriteBrief(job, prof, d, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := ParseGrammar("approve", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sch, err := ApplyDecision(job, prof, d, rec, time.Date(2026, 10, 21, 17, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	captions := map[string]string{}
+	for _, s := range d.Statics {
+		captions[s.ID] = s.Caption
+	}
+	var statics []ScheduleCell
+	for _, c := range sch.Cells {
+		if c.Kind != "static" {
+			continue
+		}
+		if c.Title == "" || c.Title != captions[c.ClipID] {
+			t.Fatalf("static cell title = %q, want its caption %q: %+v", c.Title, captions[c.ClipID], c)
+		}
+		if c.PublishAt != "" {
+			t.Fatalf("a static goes into the Buffer queue and has no publish_at: %+v", c)
+		}
+		statics = append(statics, c)
+	}
+	if len(statics) != 3 { // s1 instagram + linkedin_page, s2 instagram
+		t.Fatalf("static cells = %d: %+v", len(statics), statics)
+	}
+
+	gp := *prof
+	gp.Inbox, gp.Orientation = t.TempDir(), "portrait"
+	// The profile names Buffer channels by family (linkedin): the linkedin_page
+	// static resolves to it in parse-decision and in the gate alike.
+	b, _ := json.Marshal(gp)
+	if err := os.MkdirAll(model.ProfilesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(model.ProfilePath("evc"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cellsPath := filepath.Join(t.TempDir(), "statics.json")
+	b, _ = json.Marshal(statics)
+	if err := os.WriteFile(cellsPath, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	code := gates.Main([]string{"validate", "--profile", "evc", "--cells", cellsPath, "--now", "2026-10-21T17:00:00Z"}, nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("gate validate on the static cells: exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+}

@@ -255,10 +255,6 @@ func (m *Manifest) AppendScheduleLine(l ScheduleLine) error {
 		return errors.New("schedule line has no cell.clip_id")
 	}
 	m.EnsureClip(Clip{ClipID: l.Cell.ClipID, Title: l.Cell.Title, Description: l.Cell.Description, DurationSec: l.Cell.DurationSec})
-	id := l.PostID
-	if id == "" && l.Error == "" {
-		id = l.ScheduleID
-	}
 	return m.AppendPost(ScheduledPost{
 		ClipID:         l.Cell.ClipID,
 		ProjectID:      l.Cell.ProjectID,
@@ -269,7 +265,7 @@ func (m *Manifest) AppendScheduleLine(l ScheduleLine) error {
 		Transport:      l.Transport,
 		ScheduledAtUTC: l.Cell.PublishAt,
 		APIResponse:    l.Response,
-		ScheduleID:     id,
+		ScheduleID:     l.RecordedID(),
 		Error:          l.Error,
 	})
 }

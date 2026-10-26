@@ -104,11 +104,11 @@ Per cell, in this order:
 | check | field | rule |
 |---|---|---|
 | (a) caps | `title`, `description`, `hashtags` | per-platform caps from `constraints.json` (rune counts); `title` is required on every platform (a skipCurate full video ships with null title metadata, so the skill must always write one); hashtag count cap; post text + ` #tag`s within the post-text cap; hashtags well-formed |
-| (a') account | `account_id`, `sub_account_id` | the platform is connected in the profile and `account_id` matches it (fix hint: "connect the account in OpusClip and add it to the profile"); `sub_account_id` present on facebook / linkedin_page / linkedin_profile clip and full cells |
+| (a') account | `account_id`, `sub_account_id` | the platform is connected in the profile and `account_id` matches it (fix hint: "connect the account in OpusClip and add it to the profile"); a static's account is its Buffer channel, by exact platform key else family key (`linkedin` for `linkedin_page`); `sub_account_id` present on facebook / linkedin_page / linkedin_profile clip and full cells |
 | (b) duration | `duration_sec` | clip/full cells only: threads 300, linkedin_page/profile 600, instagram 900, tiktok 600, facebook 14400, youtube 43200, x 140 seconds; override with `profile.extra.max_duration_sec` (`{"platform": seconds}`) |
 | (c) profanity | `title`, `description`, `hashtags` | no whole word (case-insensitive) from `censor/default.json` next to the plugin binary (`../censor/default.json` from the binary's directory) or `--censor-list`, plus `profile.censor.extra` when `censor.enabled` |
 | (d) cadence | `publish_at` | cells plus `--existing` never exceed `cadence[platform]` per `(platform, sub_account_id)` on any local day (clip and full cells only) |
-| (e) timing | `publish_at` | present, RFC3339, and in the future for every non-held cell |
+| (e) timing | `publish_at` | present, RFC3339, and in the future for every non-held clip and full cell; a static may have none (it goes into the Buffer queue), and one it carries is checked the same way |
 
 Exit `0` when every cell passes (nothing on stdout). Exit `65` with one JSON
 verdict per failing check on stdout:

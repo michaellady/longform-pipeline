@@ -121,7 +121,7 @@ put anything extra under `extra`.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `channels` | map platform -> channel id | `{}` | Buffer channels for statics: `instagram`, `linkedin`, `facebook`, `threads`, optionally `bluesky`, `pinterest`. |
+| `channels` | map platform -> channel id | `{}` | Buffer channels for statics: `instagram`, `linkedin`, `facebook`, `threads`, optionally `bluesky`, `pinterest`. A cell platform resolves by exact key, else its family before the first `_` (`linkedin` covers `linkedin_page` and `linkedin_profile`). |
 | `tags` | map format -> tag id | `{}` | Keys `video_quote`, `video_carousel`, `video_still`, `video_frame_carousel` for the Buffer tags `format:video-quote` etc. A static whose tag is missing is skipped. |
 
 ## `statics`

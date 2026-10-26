@@ -107,59 +107,27 @@ func Seal(j *model.Job, opts SealOptions) (*SealResult, error) {
 }
 
 // matchCells pairs every cell that should have posted with one recorded post
-// of the same clip id and platform that has an id and no error. Each post
-// satisfies at most one cell, so a double append never hides a missing one.
+// by manifest.MatchCells (same clip id and platform, an id, no error; each
+// post satisfies at most one cell, so a double append never hides a missing
+// one). `opus schedule --job` skips cells by the same rule.
 func matchCells(cells []gates.Cell, m *manifest.Manifest) (need, matched int, missing []Verdict) {
-	type ref struct{ clip, post int }
-	used := map[ref]bool{}
 	missing = []Verdict{}
-	for _, c := range cells {
-		if c.Parked() {
+	for i, r := range m.MatchCells(cells) {
+		if r.Parked {
 			continue
 		}
 		need++
-		platform := gates.PlatformOf(c)
-		var errored, noID string
-		found := false
-		for ci := range m.Clips {
-			if m.Clips[ci].ClipID != c.ClipID {
-				continue
-			}
-			for pi, p := range m.Clips[ci].ScheduledPosts {
-				pp := p.Platform
-				if pp == "" {
-					pp = gates.LabelToPlatform(p.Label)
-				}
-				if pp != platform || used[ref{ci, pi}] {
-					continue
-				}
-				switch {
-				case p.Error != "":
-					errored = p.Error
-				case p.ScheduleID == "":
-					noID = "a post is recorded without an id"
-				default:
-					used[ref{ci, pi}] = true
-					found = true
-				}
-				if found {
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-		if found {
+		if r.Post != nil {
 			matched++
 			continue
 		}
-		v := Verdict{Kind: c.Kind, ClipID: c.ClipID, Label: c.Label, Platform: platform, Field: "post"}
+		c := cells[i]
+		v := Verdict{Kind: c.Kind, ClipID: c.ClipID, Label: c.Label, Platform: gates.PlatformOf(c), Field: "post"}
 		switch {
-		case noID != "":
-			v.Reason = noID
-		case errored != "":
-			v.Reason = "the schedule call failed: " + errored
+		case r.NoID:
+			v.Reason = "a post is recorded without an id"
+		case r.Errored != "":
+			v.Reason = "the schedule call failed: " + r.Errored
 		default:
 			v.Reason = "no post recorded in manifest.json"
 		}

@@ -212,7 +212,7 @@ func Monitor(ctx context.Context, j *model.Job, opts MonitorOptions) (*MonitorRe
 				}
 				chk.Note = reason
 				missing = append(missing, candidate{p.ClipID + "/" + p.Platform, Verdict{ClipID: p.ClipID, Label: p.Label, Platform: p.Platform, ScheduleID: id, Field: "schedule_id", Reason: reason,
-					FixHint: "check the post with opusclip_list_scheduled_posts; re-schedule the cell with longform opus schedule and append its line (the new pending id replaces this one), then re-run longform monitor"}})
+					FixHint: "check the post with opusclip_list_scheduled_posts; re-schedule the cell with longform opus schedule, without --job (the manifest still records this id, so --job would skip the cell), and append its line (the new pending id replaces this one), then re-run longform monitor"}})
 			}
 			checks[id] = chk
 		}

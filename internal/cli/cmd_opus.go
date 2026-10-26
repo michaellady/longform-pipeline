@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/michaellady/longform-pipeline/internal/gates"
+	"github.com/michaellady/longform-pipeline/internal/manifest"
 	"github.com/michaellady/longform-pipeline/internal/model"
 	"github.com/michaellady/longform-pipeline/internal/opusclip"
 )
@@ -53,7 +55,10 @@ func opusHelp() int {
   describe      --project P --clip C [--include editingScript]
   export        --project P --clip C [--out file]   print fresh export/preview URIs (signed, expiring), optionally download
   strip-overlay --project P --clip C [--wait] [--force]   free re-render with the screen overlay removed (skipped when none)
-  schedule      --cells cells.json [--profile NAME] [--dry-run]   one JSON line per cell, 1 req/s
+  schedule      --cells cells.json [--job DIR] [--profile NAME] [--dry-run]
+                                             one JSON line per newly scheduled cell, 1 req/s; static cells are
+                                             skipped (Buffer); --job skips cells DIR/manifest.json already
+                                             records and records each new post there as it is made
   unschedule    <scheduleId>                 DELETE /publish-schedules/{id}`)
 	return 64
 }
@@ -319,13 +324,14 @@ func opusStrip(ctx context.Context, client *opusclip.Client, args []string) int 
 func opusSchedule(ctx context.Context, client *opusclip.Client, args []string) int {
 	fs := flag.NewFlagSet("schedule", flag.ContinueOnError)
 	cellsPath := fs.String("cells", "", "JSON array of cells ('-' for stdin)")
+	jobDir := fs.String("job", "", "skip cells <job>/manifest.json already records and record each new post there right after it is made (the approval phase always passes it)")
 	profileName := fs.String("profile", "", "resolve empty account_id from this profile's opusclip.accounts[platform]")
 	dryRun := fs.Bool("dry-run", false, "print the request bodies without calling the API")
 	if err := fs.Parse(args); err != nil {
 		return 64
 	}
-	if *cellsPath == "" {
-		fmt.Fprintln(os.Stderr, "opus schedule: --cells is required")
+	if *cellsPath == "" || fs.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "opus schedule: --cells is required and takes no positional arguments")
 		return 64
 	}
 	var data []byte
@@ -352,9 +358,45 @@ func opusSchedule(ctx context.Context, client *opusclip.Client, args []string) i
 			return 65
 		}
 	}
+	ids, err := cellIdentities(data, len(cells))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "opus schedule:", err)
+		return 65
+	}
+	manifestPath := ""
+	if *jobDir != "" {
+		if err := matchRecorded(*jobDir, ids); err != nil {
+			fmt.Fprintln(os.Stderr, "opus schedule:", err)
+			return 65
+		}
+		manifestPath = manifest.PathIn(*jobDir)
+	}
 	enc := json.NewEncoder(os.Stdout)
-	failed := 0
-	for _, cell := range cells {
+	failed, scheduled, skipped := 0, 0, 0
+	summary := func() {
+		s := fmt.Sprintf("schedule: %d scheduled, %d skipped", scheduled, skipped)
+		if failed > 0 {
+			s += fmt.Sprintf(", %d failed", failed)
+		}
+		if *dryRun {
+			s += " (dry run: nothing was sent)"
+		}
+		fmt.Fprintln(os.Stderr, s)
+	}
+	// stdout stays one line per newly scheduled (or failed) cell: the skill
+	// may pipe it into `manifest append-post`, so skips go to stderr only.
+	for i, cell := range cells {
+		id := ids[i]
+		if id.Kind == gates.KindStatic {
+			skipped++
+			fmt.Fprintf(os.Stderr, "schedule: static %s goes through Buffer, skipped\n", cell.ClipID)
+			continue
+		}
+		if id.recordedID != "" {
+			skipped++
+			fmt.Fprintf(os.Stderr, "schedule: skipped %s on %s: already in manifest (%s)\n", id.name(), gates.PlatformOf(id.cell()), id.recordedID)
+			continue
+		}
 		line := scheduleLine{Cell: cell}
 		req, err := cellToRequest(cell, profile)
 		switch {
@@ -370,27 +412,123 @@ func opusSchedule(ctx context.Context, client *opusclip.Client, args []string) i
 				if errors.As(err, &ae) {
 					line.Status = ae.Status
 				}
-			} else {
-				line.ScheduleID = res.ScheduleID
-				line.Response = res.Raw
+				break
+			}
+			line.ScheduleID = res.ScheduleID
+			line.Response = res.Raw
+			if manifestPath == "" {
+				break
+			}
+			// Record the post before the next cell, so a crash later in the
+			// run cannot leave a scheduled post the manifest does not know.
+			rec := manifest.ScheduleLine{Cell: id.recordCell(cell, req), Response: res.Raw, ScheduleID: res.ScheduleID}
+			if _, err := manifest.RecordLine(manifestPath, rec); err != nil {
+				scheduled++
+				_ = enc.Encode(line) // still hand the line to a pipe into append-post
+				fmt.Fprintf(os.Stderr, "opus schedule: %s was scheduled (%s) but could not be recorded in %s: %v\n", id.name(), res.ScheduleID, manifestPath, err)
+				summary()
+				return 70
 			}
 		}
 		if line.Error != "" {
 			failed++
+		} else {
+			scheduled++
 		}
 		if err := enc.Encode(line); err != nil {
 			return 70
 		}
 		if ctx.Err() != nil {
+			summary()
 			fmt.Fprintln(os.Stderr, "opus schedule: interrupted")
 			return 75
 		}
 	}
+	summary()
 	if failed > 0 {
 		fmt.Fprintf(os.Stderr, "opus schedule: %d of %d cells failed\n", failed, len(cells))
 		return 65
 	}
 	return 0
+}
+
+// cellIdentity is the part of a cells-file row `opus schedule` needs beyond
+// the request: kind (statics are skipped), the identity seal matches on,
+// and the label and duration the manifest records.
+type cellIdentity struct {
+	Kind        string  `json:"kind"`
+	ClipID      string  `json:"clip_id"`
+	Platform    string  `json:"platform"`
+	Label       string  `json:"label"`
+	Status      string  `json:"status"`
+	DurationSec float64 `json:"duration_sec"`
+
+	recordedID string // the id manifest.json already records for the cell (--job)
+}
+
+func (c cellIdentity) cell() gates.Cell {
+	return gates.Cell{Kind: c.Kind, ClipID: c.ClipID, Platform: c.Platform, Label: c.Label, Status: c.Status, DurationSec: c.DurationSec}
+}
+
+// name is how stderr names the cell: its label, else its clip id.
+func (c cellIdentity) name() string {
+	if c.Label != "" {
+		return c.Label
+	}
+	return "clip " + c.ClipID
+}
+
+// recordCell is the cell recorded in manifest.json for a post: the row as
+// sent, with the account the request actually used.
+func (c cellIdentity) recordCell(cell ScheduleCell, req opusclip.ScheduleRequest) gates.Cell {
+	g := c.cell()
+	g.ProjectID, g.Platform = cell.ProjectID, cell.Platform
+	g.AccountID, g.SubAccountID = req.PostAccountID, req.SubAccountID
+	g.Title, g.Description, g.PublishAt = cell.Title, cell.Description, cell.PublishAt
+	return g
+}
+
+// cellIdentities decodes only the identity fields of the cells array, so a
+// cell file the poster accepts does not fail here on an unrelated field.
+func cellIdentities(data []byte, n int) ([]cellIdentity, error) {
+	var ids []cellIdentity
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return nil, fmt.Errorf("cells: cannot read kind/clip_id/platform/label/status: %w", err)
+	}
+	if len(ids) != n {
+		return nil, fmt.Errorf("cells: read %d identities for %d cells", len(ids), n)
+	}
+	return ids, nil
+}
+
+// matchRecorded reads <jobDir>/manifest.json (absent = nothing recorded) and
+// sets recordedID on every cell that already has a recorded post, by
+// manifest.MatchCells, the identity rule `manifest seal` checks: same clip
+// id and platform, an id, no error, one post per cell. The job directory
+// itself must exist, so a mistyped path never reads as "nothing recorded".
+func matchRecorded(jobDir string, ids []cellIdentity) error {
+	if st, err := os.Stat(jobDir); err != nil {
+		return fmt.Errorf("--job: %w", err)
+	} else if !st.IsDir() {
+		return fmt.Errorf("--job: %s is not a directory", jobDir)
+	}
+	m, err := manifest.Load(manifest.PathIn(jobDir))
+	if errors.Is(err, os.ErrNotExist) {
+		m, err = &manifest.Manifest{Clips: []manifest.Clip{}}, nil
+	}
+	if err != nil {
+		return err
+	}
+	cells := make([]gates.Cell, len(ids))
+	for i := range ids {
+		cells[i] = ids[i].cell()
+	}
+	for i, r := range m.MatchCells(cells) {
+		if r.Post != nil {
+			ids[i].recordedID = r.Post.ScheduleID
+		}
+	}
+	return nil
 }
 
 // cellToRequest validates a cell and resolves its account through the

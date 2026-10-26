@@ -295,10 +295,25 @@ Steps, in order, reading every exit code:
    - any other exit: stop and report.
 4. `longform manifest init --job <jobdir>` (idempotent), then
    `longform manifest ensure-clip --job <jobdir>` for every clip in `schedule.json`.
-5. `longform opus schedule --cells <jobdir>/review/schedule.json` posts each cell at
-   1 req/s and prints one JSON line per cell with the verbatim response. For each line,
-   `longform manifest append-post --job <jobdir>` with that line on stdin.
-   Re-running after a crash is safe: the binary skips cells already in the manifest.
+5. `longform opus schedule --cells <jobdir>/review/schedule.json --job <jobdir>` (always
+   pass `--job`) first reads `<jobdir>/manifest.json` and skips every cell that already
+   has a recorded post: same `clip_id` and platform, an id, no `error`, one post per
+   cell (the rule step 8's seal checks). Static cells are skipped as well (step 6 posts
+   them): `schedule: static <id> goes through Buffer, skipped`. It posts the rest at
+   1 req/s and records each successful response verbatim in `manifest.json` right after
+   its POST, before the next cell, so a crash mid-step loses no post. Stdout carries one
+   JSON line per newly scheduled or failed cell; a skipped cell prints nothing on stdout
+   and one `schedule: skipped <label> on <platform>: already in manifest (<id>)` line on
+   stderr; stderr ends with `schedule: <n> scheduled, <m> skipped` (`, <k> failed` when
+   cells failed). Exit 65 means cells failed: their lines carry `error`, nothing is
+   recorded for them, and seal lists them as missing; fix the cause and re-run this
+   step.
+   Piping stdout into `longform manifest append-post --job <jobdir>` is optional with
+   `--job` and kept for backwards compatibility: the posted lines are already recorded,
+   so `append-post` answers `append-post: duplicate <id> ignored` for each (exit 0) and
+   only adds the failed attempts' lines, which give seal's verdict the API error.
+   Re-running the approval phase from this step is safe: every cell OpusClip accepted is
+   already in `manifest.json` and is skipped.
 6. Statics through Buffer: for every static in `schedule.json`, one
    `mcp__buffer__create_post` per platform in its `platforms`, `mode: addToQueue`,
    `channelId` from `profile.buffer.channels[platform]`, media from `statics/<id>/`,
@@ -325,7 +340,8 @@ Steps, in order, reading every exit code:
    - exit 0: continue (also when the job was already sealed).
    - exit 65: stdout lists the cells with no post, one JSON object per line
      (`clip_id`, `platform`, `label`, `reason`). Those cells were not posted: fix them
-     and re-run step 5 (OpusClip) or step 6 (Buffer) for exactly those cells, then seal
+     and re-run step 5 (OpusClip; with `--job` the whole `schedule.json` is fine, the
+     recorded cells are skipped) or step 6 (Buffer) for exactly those cells, then seal
      again. Pass `--allow-missing` only if the user decided to skip them; the skipped
      cells are recorded under `job.extra.seal.missing`.
    - any other exit: stop and report.
@@ -345,9 +361,10 @@ held count, anything the gate rewrote.
 - **Approval phase stopped before the seal step** (the job stays `approved`; the
   watcher logs "approved but not sealed" every pass and never finishes it): resume,
   do not restart. Run `longform manifest seal --job <jobdir>` first; exit 65 lists
-  exactly the cells that have no post yet. Schedule only those (step 5 with a cells
-  file holding just them, or step 6), append their lines, and seal again. Re-running
-  step 5 on the whole `schedule.json` would schedule the posted cells a second time.
+  exactly the cells that have no post yet. Then re-run step 5 on the whole
+  `schedule.json` with `--job` (recorded cells and statics are skipped, so only the
+  listed OpusClip cells post, each recorded as it is made) and step 6 for the listed
+  statics only, append their Buffer lines, and seal again.
 - **Re-run of the draft phase on a `drafted` job**: exit immediately; the user must
   `reject` first or edit `draft.json` by hand and run `longform brief render` again.
 - **Fewer candidates than slots**: fill what you can; never lower the score floor below

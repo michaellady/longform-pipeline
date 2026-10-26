@@ -211,6 +211,34 @@ func TestTiming_MissingAndPast(t *testing.T) {
 	if vs := validateTiming(Cell{Platform: "youtube", PublishAt: "2026-10-22T11:00:00Z"}, now); len(vs) != 0 {
 		t.Errorf("future publish_at passes, got %+v", vs)
 	}
+	// Statics go into the Buffer queue: no publish time needed, but one they
+	// carry must still be valid. OpusClip cells still need one.
+	if vs := validateTiming(Cell{Kind: KindStatic, Platform: "instagram"}, now); len(vs) != 0 {
+		t.Errorf("a static without publish_at passes, got %+v", vs)
+	}
+	if vs := validateTiming(Cell{Kind: KindStatic, Platform: "instagram", PublishAt: "2026-10-21T11:00:00Z"}, now); !hasVerdict(vs, "instagram", "publish_at", "not after now") {
+		t.Errorf("a static with a past publish_at must fail, got %+v", vs)
+	}
+	for _, kind := range []string{KindClip, KindFull} {
+		if vs := validateTiming(Cell{Kind: kind, Platform: "youtube"}, now); !hasVerdict(vs, "youtube", "publish_at", "empty") {
+			t.Errorf("a %s cell without publish_at must fail, got %+v", kind, vs)
+		}
+	}
+}
+
+// TestStatic_NoPublishAtPassesWholeGate: a static with no publish_at runs
+// through every check (cadence included, which counts clip and full cells
+// only) without a verdict.
+func TestStatic_NoPublishAtPassesWholeGate(t *testing.T) {
+	p := testProfile()
+	cells := []Cell{
+		{Kind: KindStatic, ClipID: "s1", Platform: "instagram", AccountID: "buf-ig", Title: "A quote", Description: "A quote", Label: "static s1 (quote)"},
+		{Kind: KindStatic, ClipID: "s2", Platform: "instagram", AccountID: "buf-ig", Title: "Another", Description: "Another", Label: "static s2 (quote)"},
+	}
+	vs, err := Validate(p, cells, nil, Options{Now: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)})
+	if err != nil || len(vs) != 0 {
+		t.Fatalf("statics without publish_at: %v %+v", err, vs)
+	}
 }
 
 func testProfile() *model.Profile {
@@ -266,6 +294,34 @@ func TestAccount_UnconnectedAndSubAccount(t *testing.T) {
 	}
 	if vs := validateAccount(p, Cell{Kind: KindStatic, Platform: "threads", AccountID: "x"}); !hasVerdict(vs, "threads", "account_id", "no account for threads static") {
 		t.Errorf("static with no Buffer channel must fail, got %+v", vs)
+	}
+}
+
+// TestAccount_StaticBufferChannelExactThenFamily: a static's Buffer channel
+// resolves like parse-decision resolves it: the exact platform key, else the
+// family key (linkedin for linkedin_page and linkedin_profile).
+func TestAccount_StaticBufferChannelExactThenFamily(t *testing.T) {
+	p := testProfile()
+	p.Buffer.Channels = map[string]string{"linkedin": "buf-li", "facebook_page": "buf-fbp"}
+	for _, plat := range []string{"linkedin_page", "linkedin_profile"} {
+		if vs := validateAccount(p, Cell{Kind: KindStatic, Platform: plat, AccountID: "buf-li"}); len(vs) != 0 {
+			t.Errorf("%s static on the family channel must pass, got %+v", plat, vs)
+		}
+	}
+	if vs := validateAccount(p, Cell{Kind: KindStatic, Platform: "linkedin_page", AccountID: "other"}); !hasVerdict(vs, "linkedin_page", "account_id", "not the profile") {
+		t.Errorf("a static on another channel must fail, got %+v", vs)
+	}
+	// The exact key wins over the family.
+	p.Buffer.Channels["linkedin_page"] = "buf-li-page"
+	if vs := validateAccount(p, Cell{Kind: KindStatic, Platform: "linkedin_page", AccountID: "buf-li-page"}); len(vs) != 0 {
+		t.Errorf("exact key must win, got %+v", vs)
+	}
+	if vs := validateAccount(p, Cell{Kind: KindStatic, Platform: "linkedin_page", AccountID: "buf-li"}); !hasVerdict(vs, "linkedin_page", "account_id", "not the profile") {
+		t.Errorf("the family channel must not pass once the exact key is set, got %+v", vs)
+	}
+	// Clips never read Buffer channels.
+	if vs := validateAccount(p, Cell{Kind: KindClip, Platform: "linkedin_page", AccountID: "buf-li", SubAccountID: "s"}); !hasVerdict(vs, "linkedin_page", "account_id", "not the profile") {
+		t.Errorf("a clip must use the OpusClip account, got %+v", vs)
 	}
 }
 

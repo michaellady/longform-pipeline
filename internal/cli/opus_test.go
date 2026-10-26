@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/michaellady/longform-pipeline/internal/manifest"
 	"github.com/michaellady/longform-pipeline/internal/model"
 	"github.com/michaellady/longform-pipeline/internal/opusclip"
 )
@@ -33,7 +34,8 @@ type fakeOpus struct {
 	clipsAfter    int // list returns clips once listCalls[project] > clipsAfter
 	reRenders     map[string]json.RawMessage
 	schedules     []map[string]any
-	failSchedule  int // 1-based index of the cell that answers 400
+	failSchedule  int         // 1-based index of the cell that answers 400
+	onSchedule    func(n int) // called with the 1-based POST number before the fake answers
 }
 
 func newFakeOpus(t *testing.T) *fakeOpus {
@@ -113,6 +115,9 @@ func (f *fakeOpus) handle(w http.ResponseWriter, r *http.Request) {
 		var m map[string]any
 		json.Unmarshal(body, &m)
 		f.schedules = append(f.schedules, m)
+		if f.onSchedule != nil {
+			f.onSchedule(len(f.schedules))
+		}
 		if len(f.schedules) == f.failSchedule {
 			http.Error(w, `{"message":"bad account"}`, 400)
 			return
@@ -440,4 +445,226 @@ func TestOpusScheduleIsolatesFailures(t *testing.T) {
 	if f.schedules[2]["postAccountId"] != "acct_yt" {
 		t.Errorf("profile account not resolved: %v", f.schedules[2])
 	}
+}
+
+// captureStdio runs fn with stdout and stderr redirected and returns both.
+func captureStdio(t *testing.T, fn func() int) (stdout, stderr string, code int) {
+	t.Helper()
+	oldOut, oldErr := os.Stdout, os.Stderr
+	ro, wo, _ := os.Pipe()
+	re, we, _ := os.Pipe()
+	os.Stdout, os.Stderr = wo, we
+	var errBuf bytes.Buffer
+	done := make(chan struct{})
+	go func() { _, _ = io.Copy(&errBuf, re); close(done) }()
+	var outBuf bytes.Buffer
+	outDone := make(chan struct{})
+	go func() { _, _ = io.Copy(&outBuf, ro); close(outDone) }()
+	code = fn()
+	wo.Close()
+	we.Close()
+	<-outDone
+	<-done
+	os.Stdout, os.Stderr = oldOut, oldErr
+	return outBuf.String(), errBuf.String(), code
+}
+
+// TestOpusScheduleJobSkipsRecordedCells: with --job, a cell manifest.json
+// already records (same clip and platform, an id, no error: seal's rule) is
+// not posted and prints nothing on stdout; every new post is recorded by
+// opus schedule itself, so the pipe into append-post only finds duplicates.
+func TestOpusScheduleJobSkipsRecordedCells(t *testing.T) {
+	f := newFakeOpus(t)
+	job := setupJob(t, f, false)
+	dir := job.Dir()
+	cells := []map[string]any{
+		{"kind": "full", "project_id": "PF", "clip_id": "F", "platform": "youtube", "account_id": "acct_yt", "title": "full", "publish_at": "2026-11-01T16:00:00Z", "label": "full video", "duration_sec": 300},
+		{"kind": "clip", "project_id": "P", "clip_id": "C1", "platform": "youtube", "account_id": "acct_yt", "title": "one", "publish_at": "2026-11-02T16:00:00Z", "label": "clip 1: One", "duration_sec": 30},
+		{"kind": "clip", "project_id": "P", "clip_id": "C1", "platform": "instagram", "account_id": "acct_ig", "title": "one", "publish_at": "2026-11-02T19:00:00Z", "label": "clip 1: One", "duration_sec": 30},
+	}
+	path := writeScheduleFile(t, dir, cells)
+	appendPost := func(lines string) string {
+		t.Helper()
+		var so, se bytes.Buffer
+		if code := manifest.Main([]string{"append-post", "--job", dir}, strings.NewReader(lines), &so, &se); code != 0 {
+			t.Fatalf("append-post exit %d: %s", code, se.String())
+		}
+		return se.String()
+	}
+
+	// No manifest.json yet: nothing is recorded, every cell posts, and each
+	// post lands in a manifest opus schedule creates.
+	out, errOut, code := captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", path, "--job", dir}) })
+	if code != 0 || len(f.schedules) != 3 || len(nonEmpty(out)) != 3 {
+		t.Fatalf("first run: exit %d, %d API calls, stdout:\n%s\nstderr:\n%s", code, len(f.schedules), out, errOut)
+	}
+	if !strings.Contains(errOut, "schedule: 3 scheduled, 0 skipped\n") {
+		t.Fatalf("first run stderr:\n%s", errOut)
+	}
+	m, err := manifest.Load(manifest.PathIn(dir))
+	if err != nil {
+		t.Fatalf("opus schedule --job must create and fill manifest.json: %v", err)
+	}
+	if ids := strings.Join(m.ScheduleIDs(), ","); ids != "sched_1,sched_2,sched_3" {
+		t.Fatalf("recorded ids = %s", ids)
+	}
+	if p := m.Find("C1").ScheduledPosts[1]; p.Label != "clip 1: One" || p.Platform != "instagram" || p.AccountID != "acct_ig" || p.ProjectID != "P" || m.Find("C1").DurationSec != 30 {
+		t.Fatalf("recorded post = %+v (clip %+v)", p, m.Find("C1"))
+	}
+	// The skill's pipe into append-post is now a no-op for those lines.
+	if se := appendPost(out); strings.Count(se, "append-post: duplicate sched_") != 3 || !strings.Contains(se, "appended 0 posts (3 total)") {
+		t.Fatalf("pipe into append-post:\n%s", se)
+	}
+
+	// Every cell recorded: no call, empty stdout, one stderr line per cell.
+	out, errOut, code = captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", path, "--job", dir}) })
+	if code != 0 || len(f.schedules) != 3 || out != "" {
+		t.Fatalf("second run: exit %d, %d API calls, stdout %q\nstderr:\n%s", code, len(f.schedules), out, errOut)
+	}
+	for _, want := range []string{
+		"schedule: skipped full video on youtube: already in manifest (sched_1)\n",
+		"schedule: skipped clip 1: One on youtube: already in manifest (sched_2)\n",
+		"schedule: skipped clip 1: One on instagram: already in manifest (sched_3)\n",
+		"schedule: 0 scheduled, 3 skipped\n",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("second run stderr lacks %q:\n%s", want, errOut)
+		}
+	}
+
+	// Without --job nothing is read or written and everything posts (the
+	// fake-server tools, one-off re-schedules). --dry-run sends nothing.
+	before, _ := os.ReadFile(manifest.PathIn(dir))
+	out, errOut, code = captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", path, "--dry-run"}) })
+	after, _ := os.ReadFile(manifest.PathIn(dir))
+	if code != 0 || len(nonEmpty(out)) != 3 || len(f.schedules) != 3 || !strings.Contains(errOut, "schedule: 3 scheduled, 0 skipped (dry run") || !bytes.Equal(before, after) {
+		t.Fatalf("no --job dry run: exit %d, %d calls\n%s\n%s", code, len(f.schedules), out, errOut)
+	}
+
+	// Mixed: a fresh manifest records the instagram cell and a failed
+	// attempt for the full video. The failed attempt is not a post, so the
+	// full video and the youtube cell post; instagram is skipped.
+	if code := manifest.Main([]string{"init", "--job", dir, "--force"}, nil, io.Discard, io.Discard); code != 0 {
+		t.Fatal("manifest init --force failed")
+	}
+	appendPost(`{"cell":{"clip_id":"C1","platform":"instagram","label":"clip 1: One"},"response":{"data":{"scheduleId":"ig-old"}}}
+{"cell":{"clip_id":"F","platform":"youtube","label":"full video"},"response":null,"error":"HTTP 500"}`)
+	out, errOut, code = captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", path, "--job", dir}) })
+	lines := nonEmpty(out)
+	if code != 0 || len(f.schedules) != 5 || len(lines) != 2 {
+		t.Fatalf("mixed run: exit %d, %d API calls total, stdout:\n%s\nstderr:\n%s", code, len(f.schedules), out, errOut)
+	}
+	var l0, l1 scheduleLine
+	_ = json.Unmarshal([]byte(lines[0]), &l0)
+	_ = json.Unmarshal([]byte(lines[1]), &l1)
+	if l0.Cell.ClipID != "F" || l0.ScheduleID != "sched_4" || l1.Cell.ClipID != "C1" || l1.Cell.Platform != "youtube" || l1.ScheduleID != "sched_5" {
+		t.Fatalf("mixed run posted the wrong cells:\n%s", out)
+	}
+	if !strings.Contains(errOut, "schedule: skipped clip 1: One on instagram: already in manifest (ig-old)\n") || !strings.Contains(errOut, "schedule: 2 scheduled, 1 skipped\n") {
+		t.Fatalf("mixed run stderr:\n%s", errOut)
+	}
+
+	// A --job that is not a directory is an error before any call.
+	_, errOut, code = captureStdio(t, func() int {
+		return runOpus([]string{"schedule", "--cells", path, "--job", filepath.Join(dir, "nope")})
+	})
+	if code != 65 || len(f.schedules) != 5 || !strings.Contains(errOut, "--job") {
+		t.Fatalf("missing job dir: exit %d, %d calls\n%s", code, len(f.schedules), errOut)
+	}
+}
+
+// TestOpusScheduleRecordsEachPostAndSkipsStatics: a static cell is skipped
+// (it goes through Buffer) and is not a failure; with --job every successful
+// POST is in manifest.json before the next cell is sent, so a run that dies
+// midway (here the 3rd POST fails; nothing is piped into append-post) keeps
+// the posts made before it, and the re-run posts only what is missing.
+func TestOpusScheduleRecordsEachPostAndSkipsStatics(t *testing.T) {
+	f := newFakeOpus(t)
+	job := setupJob(t, f, false)
+	dir := job.Dir()
+	cells := []map[string]any{
+		{"kind": "full", "project_id": "PF", "clip_id": "F", "platform": "youtube", "account_id": "acct_yt", "title": "full", "publish_at": "2026-11-01T16:00:00Z", "label": "full video"},
+		{"kind": "static", "project_id": "", "clip_id": "s1", "platform": "instagram", "account_id": "buf-ig", "title": "", "description": "a quote", "publish_at": "", "label": "static s1 (quote)"},
+		{"kind": "clip", "project_id": "P", "clip_id": "C1", "platform": "youtube", "account_id": "acct_yt", "title": "one", "publish_at": "2026-11-02T16:00:00Z", "label": "clip 1: One"},
+		{"kind": "clip", "project_id": "P", "clip_id": "C1", "platform": "instagram", "account_id": "acct_ig", "title": "one", "publish_at": "2026-11-02T19:00:00Z", "label": "clip 1: One"},
+		{"kind": "clip", "project_id": "P", "clip_id": "C2", "platform": "youtube", "account_id": "acct_yt", "title": "two", "publish_at": "2026-11-03T16:00:00Z", "label": "clip 2: Two"},
+	}
+	path := writeScheduleFile(t, dir, cells)
+
+	// Without --job a static is skipped too, and the run exits 0.
+	_, errOut, code := captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", path, "--dry-run"}) })
+	if code != 0 || !strings.Contains(errOut, "schedule: static s1 goes through Buffer, skipped\n") || !strings.Contains(errOut, "schedule: 4 scheduled, 1 skipped (dry run") {
+		t.Fatalf("dry run with a static: exit %d\n%s", code, errOut)
+	}
+
+	f.failSchedule = 3
+	var atThird []string
+	f.onSchedule = func(n int) {
+		if n == 3 { // what the manifest holds when the 3rd POST arrives
+			if m, err := manifest.Load(manifest.PathIn(dir)); err == nil {
+				atThird = m.ScheduleIDs()
+			}
+		}
+	}
+	out, errOut, code := captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", path, "--job", dir}) })
+	if code != 65 || len(f.schedules) != 4 {
+		t.Fatalf("run with a failing 3rd POST: exit %d (want 65), %d calls\nstdout:\n%s\nstderr:\n%s", code, len(f.schedules), out, errOut)
+	}
+	if strings.Join(atThird, ",") != "sched_1,sched_2" {
+		t.Fatalf("when the 3rd POST arrived the manifest held %v, want the two earlier posts", atThird)
+	}
+	for _, want := range []string{
+		"schedule: static s1 goes through Buffer, skipped\n",
+		"schedule: 3 scheduled, 1 skipped, 1 failed\n",
+		"opus schedule: 1 of 5 cells failed\n",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, errOut)
+		}
+	}
+	if strings.Contains(out, `"s1"`) {
+		t.Errorf("a static must print nothing on stdout:\n%s", out)
+	}
+	m, err := manifest.Load(manifest.PathIn(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := strings.Join(m.ScheduleIDs(), ","); ids != "sched_1,sched_2,sched_4" {
+		t.Fatalf("recorded ids = %s (the failed call is not a post; nothing was piped)", ids)
+	}
+	if m.Find("s1") != nil {
+		t.Fatal("the static must not enter the manifest from opus schedule")
+	}
+
+	// Re-run: only the failed cell posts.
+	f.failSchedule = 0
+	out, errOut, code = captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", path, "--job", dir}) })
+	if code != 0 || len(f.schedules) != 5 || len(nonEmpty(out)) != 1 || !strings.Contains(out, `"clip_id":"C1","platform":"instagram"`) || !strings.Contains(errOut, "schedule: 1 scheduled, 4 skipped\n") {
+		t.Fatalf("re-run: exit %d, %d calls\nstdout:\n%s\nstderr:\n%s", code, len(f.schedules), out, errOut)
+	}
+}
+
+// writeScheduleFile writes cells as review/schedule.json the way brief
+// parse-decision does ({schema_version, cells}).
+func writeScheduleFile(t *testing.T, dir string, cells []map[string]any) string {
+	t.Helper()
+	path := filepath.Join(dir, "review", "schedule.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"schema_version": "1", "cells": cells})
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func nonEmpty(s string) []string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }

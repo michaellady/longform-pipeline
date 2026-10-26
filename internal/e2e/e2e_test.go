@@ -294,7 +294,7 @@ func (h *harness) writeProfileAndCensor() {
 			CommentToDM: map[string]string{"instagram": "GUIDE"},
 		},
 		Copy:    model.CopyConfig{Style: "plain"},
-		Buffer:  model.BufferConfig{Channels: map[string]string{}, Tags: map[string]string{}},
+		Buffer:  model.BufferConfig{Channels: map[string]string{"instagram": "buf-ig"}, Tags: map[string]string{}},
 		Statics: model.StaticsConfig{TemplatesDir: filepath.Join(h.configDir, "templates"), Formats: []string{}},
 		Notify:  model.NotifyConfig{MacOS: false},
 	}
@@ -473,6 +473,7 @@ func TestPipeline(t *testing.T) {
 		dclips = append(dclips, dc)
 	}
 	wantCells++ // the full video on youtube
+	wantCells++ // the quote static on instagram (Buffer)
 	draft := map[string]any{
 		"schema_version": "1",
 		"job_id":         j.ID,
@@ -486,8 +487,12 @@ func TestPipeline(t *testing.T) {
 			"thumbnails":  []map[string]any{},
 			"platforms":   []string{"youtube"},
 		},
-		"clips":         dclips,
-		"statics":       []any{},
+		"clips": dclips,
+		"statics": []map[string]any{{
+			"id": "s1", "format": "quote", "platforms": []string{"instagram"},
+			"caption": "The one habit that fixed my mornings. Comment GUIDE for the link.",
+			"inputs":  map[string]any{"quote": "Fix the morning, fix the day.", "attribution": "EVC Test"},
+		}},
 		"censored":      []any{},
 		"stabilization": map[string]any{"before": "", "after": ""},
 		"credits":       map[string]any{"spent": 2, "to_spend": 0},
@@ -512,7 +517,7 @@ func TestPipeline(t *testing.T) {
 	readJSON(t, cellsPath, &schedule)
 	cells := schedule.Cells
 	if len(cells) != wantCells {
-		t.Fatalf("schedule.json: want %d cells (one per posted clip cell + the full video), got %d:\n%s", wantCells, len(cells), mustPretty(cells))
+		t.Fatalf("schedule.json: want %d cells (one per posted clip cell + the full video + the static), got %d:\n%s", wantCells, len(cells), mustPretty(cells))
 	}
 
 	// --- slots propose -----------------------------------------------------
@@ -538,15 +543,35 @@ func TestPipeline(t *testing.T) {
 	h.mustOK("gate", "validate", "--profile", "evc", "--cells", cellsPath)
 
 	// --- opus schedule -----------------------------------------------------
+	// --job as the skill passes it. No manifest.json yet, so every OpusClip
+	// cell posts and opus schedule records each post itself; the static is
+	// left for Buffer (step 6).
+	nOpus := 0
+	var static cell
+	for _, c := range cells {
+		if c.Kind == "static" {
+			static = c
+		} else {
+			nOpus++
+		}
+	}
+	if static.ClipID == "" || nOpus != 4 {
+		t.Fatalf("schedule.json should hold 4 OpusClip cells and one static:\n%s", mustPretty(cells))
+	}
 	before := len(h.fake.RequestsMatching("POST", "/api/publish-schedules"))
-	r = h.mustOK("opus", "schedule", "--cells", cellsPath)
+	r = h.mustOK("opus", "schedule", "--cells", cellsPath, "--job", jobDir)
+	for _, want := range []string{fmt.Sprintf("schedule: %d scheduled, 1 skipped", nOpus), "schedule: static " + static.ClipID + " goes through Buffer, skipped"} {
+		if !strings.Contains(r.stderr, want) {
+			t.Fatalf("opus schedule stderr lacks %q:\n%s", want, r)
+		}
+	}
 	resultsPath := filepath.Join(h.root, "schedule-results.jsonl")
 	if err := os.WriteFile(resultsPath, []byte(r.stdout), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	lines := nonEmptyLines(r.stdout)
-	if len(lines) != len(cells) {
-		t.Fatalf("opus schedule: want %d JSON lines (one per cell), got %d:\n%s", len(cells), len(lines), r)
+	if len(lines) != nOpus {
+		t.Fatalf("opus schedule: want %d JSON lines (one per OpusClip cell), got %d:\n%s", nOpus, len(lines), r)
 	}
 	for i, ln := range lines {
 		var rec struct {
@@ -566,8 +591,8 @@ func TestPipeline(t *testing.T) {
 		}
 	}
 	scheds := h.fake.RequestsMatching("POST", "/api/publish-schedules")[before:]
-	if len(scheds) != len(cells) {
-		t.Fatalf("fake saw %d POST /publish-schedules, want %d", len(scheds), len(cells))
+	if len(scheds) != nOpus {
+		t.Fatalf("fake saw %d POST /publish-schedules, want %d", len(scheds), nOpus)
 	}
 	if len(scheds) >= 2 {
 		gap := scheds[len(scheds)-1].At.Sub(scheds[0].At)
@@ -577,24 +602,27 @@ func TestPipeline(t *testing.T) {
 	}
 
 	// --- manifest ----------------------------------------------------------
-	h.mustOK("manifest", "init", "--job", jobDir)
-	h.mustOK("manifest", "append-post", "--job", jobDir, "--file", resultsPath)
-	// The manifest keeps the vendored shape: scheduled_posts nest under each
-	// clip so content-attribution and pm-tool keep reading it.
-	var manifestDoc struct {
-		Clips []struct {
-			ScheduledPosts []map[string]any `json:"scheduled_posts"`
-		} `json:"clips"`
-	}
+	// opus schedule --job already recorded every post, right after each
+	// POST. The manifest keeps the vendored shape: scheduled_posts nest
+	// under each clip so content-attribution and pm-tool keep reading it.
 	manifestPath := filepath.Join(jobDir, "manifest.json")
-	readJSON(t, manifestPath, &manifestDoc)
 	var manifest struct{ ScheduledPosts []map[string]any }
-	for _, c := range manifestDoc.Clips {
-		manifest.ScheduledPosts = append(manifest.ScheduledPosts, c.ScheduledPosts...)
+	readPosts := func() {
+		var doc struct {
+			Clips []struct {
+				ScheduledPosts []map[string]any `json:"scheduled_posts"`
+			} `json:"clips"`
+		}
+		readJSON(t, manifestPath, &doc)
+		manifest.ScheduledPosts = nil
+		for _, c := range doc.Clips {
+			manifest.ScheduledPosts = append(manifest.ScheduledPosts, c.ScheduledPosts...)
+		}
 	}
-	if len(manifest.ScheduledPosts) != len(cells) {
+	readPosts()
+	if len(manifest.ScheduledPosts) != nOpus {
 		b, _ := os.ReadFile(manifestPath)
-		t.Fatalf("manifest.json: want %d scheduled_posts across clips, got %d:\n%s", len(cells), len(manifest.ScheduledPosts), b)
+		t.Fatalf("right after opus schedule --job, manifest.json: want %d scheduled_posts across clips, got %d:\n%s", nOpus, len(manifest.ScheduledPosts), b)
 	}
 	for i, p := range manifest.ScheduledPosts {
 		id, _ := p["schedule_id"].(string)
@@ -604,7 +632,58 @@ func TestPipeline(t *testing.T) {
 		if _, ok := h.fake.Schedules()[id]; !ok {
 			t.Fatalf("manifest scheduled_posts[%d].schedule_id %q was never issued by the fake", i, id)
 		}
+		if l, _ := p["label"].(string); l == "" {
+			t.Fatalf("manifest scheduled_posts[%d] has no label: %v", i, p)
+		}
 	}
+	// init is idempotent, and the skill's backwards-compatible pipe of the
+	// lines into append-post only finds duplicates.
+	h.mustOK("manifest", "init", "--job", jobDir)
+	r = h.mustOK("manifest", "append-post", "--job", jobDir, "--file", resultsPath)
+	if n := strings.Count(r.stderr, "append-post: duplicate "); n != nOpus || !strings.Contains(r.stderr, "appended 0 posts") {
+		t.Fatalf("append-post after opus schedule --job: want %d duplicate lines and nothing appended:\n%s", nOpus, r)
+	}
+
+	// --- the static through Buffer (step 6) ----------------------------------
+	// The skill posts it with the Buffer MCP and appends the reply with the
+	// post id it names.
+	bufferLine, _ := json.Marshal(map[string]any{"cell": static, "response": map[string]any{"post": map[string]any{"id": "buf-e2e-1"}}, "transport": "buffer", "post_id": "buf-e2e-1"})
+	bufferPath := filepath.Join(h.root, "buffer-lines.jsonl")
+	if err := os.WriteFile(bufferPath, append(bufferLine, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r = h.mustOK("manifest", "append-post", "--job", jobDir, "--file", bufferPath)
+	if !strings.Contains(r.stderr, fmt.Sprintf("appended 1 posts (%d total)", nOpus+1)) {
+		t.Fatalf("buffer append:\n%s", r)
+	}
+
+	// --- re-run after a crash: nothing posts twice --------------------------
+	// The approval phase re-run from step 5: every cell is in the manifest,
+	// so opus schedule --job posts nothing and prints nothing on stdout, and
+	// re-appending the first run's lines adds nothing.
+	nSched := len(h.fake.Schedules())
+	before = len(h.fake.RequestsMatching("POST", "/api/publish-schedules"))
+	r = h.mustOK("opus", "schedule", "--cells", cellsPath, "--job", jobDir)
+	if strings.TrimSpace(r.stdout) != "" {
+		t.Fatalf("second opus schedule printed on stdout (it is piped into append-post):\n%s", r)
+	}
+	if n := len(h.fake.RequestsMatching("POST", "/api/publish-schedules")) - before; n != 0 || len(h.fake.Schedules()) != nSched {
+		t.Fatalf("second opus schedule made %d POST /publish-schedules (fake holds %d schedules, had %d)", n, len(h.fake.Schedules()), nSched)
+	}
+	if want := fmt.Sprintf("schedule: 0 scheduled, %d skipped", len(cells)); !strings.Contains(r.stderr, want) {
+		t.Fatalf("second opus schedule stderr lacks %q:\n%s", want, r)
+	}
+	if n := strings.Count(r.stderr, ": already in manifest ("); n != nOpus || !strings.Contains(r.stderr, "schedule: static "+static.ClipID+" goes through Buffer, skipped") {
+		t.Fatalf("second opus schedule: want one skip line per OpusClip cell (%d) and the static's, got %d:\n%s", nOpus, n, r)
+	}
+	r = h.mustOK("manifest", "append-post", "--job", jobDir, "--file", resultsPath)
+	if n := strings.Count(r.stderr, "append-post: duplicate "); n != nOpus {
+		t.Fatalf("re-append: want %d duplicate lines, got %d:\n%s", nOpus, n, r)
+	}
+	if got := strings.TrimSpace(h.mustOK("manifest", "count-scheduled", "--job", jobDir).stdout); got != fmt.Sprint(nOpus+1) {
+		t.Fatalf("re-append changed the manifest: count-scheduled = %s, want %d", got, nOpus+1)
+	}
+	readPosts()
 
 	// --- manifest seal (approved -> scheduled) -------------------------------
 	h.mustOK("manifest", "seal", "--job", jobDir)
@@ -654,7 +733,7 @@ func TestPipeline(t *testing.T) {
 	h.mustOK("watch", "--once", "--profile", "evc", "--stable-seconds", "0")
 	j = h.wantState(jobDir, model.StateMonitored)
 	mon, _ := j.Extra["monitor"].(map[string]any)
-	if mon["method"] != "opusclip-rest" || mon["pending"] != float64(len(cells)) || j.Extra["monitored_at"] == nil {
+	if mon["method"] != "opusclip-rest" || mon["pending"] != float64(nOpus) || mon["manifest_only"] != float64(1) || j.Extra["monitored_at"] == nil {
 		t.Fatalf("monitor record: %v", j.Extra)
 	}
 	reads := h.fake.RequestsMatching("GET", "/api/publish-schedules")[before:]
@@ -669,6 +748,12 @@ func TestPipeline(t *testing.T) {
 	readJSON(t, manifestPath, &sealed)
 	for _, c := range sealed.Clips {
 		for _, p := range c.ScheduledPosts {
+			if c.ClipID == static.ClipID { // a Buffer post: id only, nothing read back
+				if p.Check == nil || p.Check.Status != "manifest_only" {
+					t.Fatalf("buffer post %s: check %+v", p.ScheduleID, p.Check)
+				}
+				continue
+			}
 			var entry struct {
 				ScheduleID string `json:"scheduleId"`
 			}
