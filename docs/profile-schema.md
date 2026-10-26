@@ -19,6 +19,7 @@ put anything extra under `extra`.
 | `photos` | object | `{enabled:false}` | Second feed: an Apple Photos album. See Photos. |
 | `orientation` | `portrait` \| `landscape` | `portrait` | What the source recording is. Drives the full-video render aspect. |
 | `stitch` | object | `{enabled:false}` | See Stitch. |
+| `prepare` | object | `{encoder:"auto"}` | See Prepare. |
 | `stabilize` | object | `{enabled:false}` | See Stabilize. |
 | `censor` | object | `{enabled:false, mode:"beep"}` | See Censor. |
 | `transcribe` | object | `{language:"en"}` | See Transcribe. |
@@ -47,6 +48,12 @@ put anything extra under `extra`.
 |---|---|---|---|
 | `enabled` | bool | `false` | Concatenate several inbox files into one segment (BJJ). |
 | `session_window_min` | int | `90` when enabled | Files whose recording timestamps fall within this many minutes of each other form one segment. |
+
+## `prepare`
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `encoder` | `auto` \| `videotoolbox` \| `x264` | `auto` | Video encoder for prepare's re-encodes (HDR tonemap, stabilise pass). `auto`: the Mac's hardware `h264_videotoolbox` at `-q:v 65` when the local ffmpeg lists it and it passes a two-frame test encode, decoding with `-hwaccel videotoolbox` when that is listed too; otherwise `libx264`. `videotoolbox`: require the hardware encoder; prepare fails when it is unusable. `x264`: `libx264` CRF 18 `medium` with software decode. On a 4K HDR iPhone slice the hardware path tonemapped about 2.7x faster and wrote under a third of the bytes (SSIM 0.99 luma against x264). Either way the output is H.264 and a tonemapped file is tagged BT.709. The choice is recorded under `extra.prepare.encoder` and `extra.prepare.hwaccel` in `job.json`. A change that switches the encoder while a job is still `staged` re-runs that job's finished tonemap and stabilise steps. |
 
 ## `stabilize`
 

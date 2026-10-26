@@ -62,11 +62,18 @@
   <key>StandardErrorPath</key>
   <string>@@LOG@@/watch.err.log</string>
 
+  <!-- Standard priority, not Background. On Apple Silicon a Background
+       agent and everything it spawns (ffmpeg, whisper-cli) is held on the
+       efficiency cores with throttled IO: prepare's HDR tonemap of a 24-minute
+       4K iPhone recording ran at about 1.4 s of video per minute (18 hours),
+       while the same ffmpeg command in a terminal did 10 s of video in 15 s.
+       Clearing the background policy on the running processes afterwards
+       (taskpolicy -B) did not lift it, so the agent itself is Standard, has
+       no LowPriorityIO key, and Nice stays 0. The watcher is idle between
+       recordings; while it works, the Mac is busier. -->
   <key>ProcessType</key>
-  <string>Background</string>
-  <key>LowPriorityIO</key>
-  <true/>
+  <string>Standard</string>
   <key>Nice</key>
-  <integer>5</integer>
+  <integer>0</integer>
 </dict>
 </plist>

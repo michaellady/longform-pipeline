@@ -19,6 +19,7 @@ type Profile struct {
 	Photos      PhotosConfig     `json:"photos"`
 	Orientation string           `json:"orientation"` // "portrait" | "landscape"
 	Stitch      StitchConfig     `json:"stitch"`
+	Prepare     PrepareConfig    `json:"prepare"`
 	Stabilize   StabilizeConfig  `json:"stabilize"`
 	Censor      CensorConfig     `json:"censor"`
 	Transcribe  TranscribeConfig `json:"transcribe"`
@@ -61,6 +62,23 @@ type StitchConfig struct {
 	Enabled          bool `json:"enabled"`
 	SessionWindowMin int  `json:"session_window_min"`
 }
+
+// PrepareConfig tunes the prepare stage's video re-encodes (the HDR tonemap
+// and the stabilise pass).
+type PrepareConfig struct {
+	// Encoder is "auto" (default: Apple's hardware H.264 encoder when this
+	// Mac's ffmpeg can use it, libx264 otherwise), "videotoolbox" (require
+	// the hardware encoder; prepare fails without it) or "x264" (always
+	// libx264 CRF 18 with software decode: slower, larger files).
+	Encoder string `json:"encoder"`
+}
+
+// Values for PrepareConfig.Encoder.
+const (
+	PrepareEncoderAuto         = "auto"
+	PrepareEncoderVideoToolbox = "videotoolbox"
+	PrepareEncoderX264         = "x264"
+)
 
 type StabilizeConfig struct {
 	Enabled   bool `json:"enabled"`
@@ -199,6 +217,9 @@ func (p *Profile) applyDefaults() {
 	if p.Stitch.Enabled && p.Stitch.SessionWindowMin == 0 {
 		p.Stitch.SessionWindowMin = 90
 	}
+	if p.Prepare.Encoder == "" {
+		p.Prepare.Encoder = PrepareEncoderAuto
+	}
 	if p.Censor.Mode == "" {
 		p.Censor.Mode = "beep"
 	}
@@ -248,6 +269,11 @@ func (p *Profile) Validate() error {
 	}
 	if p.Orientation != "portrait" && p.Orientation != "landscape" {
 		errs = append(errs, fmt.Errorf("orientation must be portrait or landscape, got %q", p.Orientation))
+	}
+	switch p.Prepare.Encoder {
+	case "", PrepareEncoderAuto, PrepareEncoderVideoToolbox, PrepareEncoderX264:
+	default:
+		errs = append(errs, fmt.Errorf("prepare.encoder must be auto, videotoolbox or x264, got %q", p.Prepare.Encoder))
 	}
 	if p.Censor.Mode != "beep" && p.Censor.Mode != "mute" {
 		errs = append(errs, fmt.Errorf("censor.mode must be beep or mute, got %q", p.Censor.Mode))

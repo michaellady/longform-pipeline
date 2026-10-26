@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/michaellady/longform-pipeline/internal/model"
 )
 
 // Tools holds the resolved ffmpeg/ffprobe binaries and an optional log sink
@@ -95,7 +97,15 @@ func (t Tools) HasFilter(name string) (bool, error) {
 
 // ParseFilterList scans `ffmpeg -filters` output for a filter name. Lines look
 // like " TS zscale           V->V       Apply resizing...".
-func ParseFilterList(out []byte, name string) bool {
+func ParseFilterList(out []byte, name string) bool { return parseNameColumn(out, name) }
+
+// ParseEncoderList scans `ffmpeg -encoders` output for an encoder name. Lines
+// look like " V....D h264_videotoolbox    VideoToolbox H.264 Encoder ...".
+func ParseEncoderList(out []byte, name string) bool { return parseNameColumn(out, name) }
+
+// parseNameColumn matches the second whitespace field of any line, the name
+// column of ffmpeg's -filters and -encoders listings.
+func parseNameColumn(out []byte, name string) bool {
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
@@ -104,4 +114,84 @@ func ParseFilterList(out []byte, name string) bool {
 		}
 	}
 	return false
+}
+
+// ParseHWAccelList scans `ffmpeg -hwaccels` output, a header line followed by
+// one method name per line ("Hardware acceleration methods:\nvideotoolbox").
+func ParseHWAccelList(out []byte, name string) bool {
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		if strings.TrimSpace(sc.Text()) == name {
+			return true
+		}
+	}
+	return false
+}
+
+// HWCaps is what the local ffmpeg can do on Apple's media engine.
+type HWCaps struct {
+	HWAccel bool // `ffmpeg -hwaccels` lists videotoolbox (hardware decode)
+	Encoder bool // h264_videotoolbox is listed and passed a test encode
+}
+
+// VideoToolboxCaps probes the real ffmpeg. Being listed is not enough for the
+// encoder: it must also encode two test frames with the exact options prepare
+// uses, because ffmpeg accepts -q:v for VideoToolbox only on Apple Silicon and
+// the encoder requires the hardware engine by default, which a VM (a CI
+// runner) may not expose. A failed test encode is a "no", not an error.
+func (t Tools) VideoToolboxCaps() (HWCaps, error) {
+	var c HWCaps
+	out, err := t.run("", t.FFmpeg, "-hide_banner", "-hwaccels")
+	if err != nil {
+		return c, err
+	}
+	c.HWAccel = ParseHWAccelList(out, HWAccelVideoToolbox)
+	out, err = t.run("", t.FFmpeg, "-hide_banner", "-encoders")
+	if err != nil {
+		return c, err
+	}
+	if ParseEncoderList(out, EncoderVideoToolbox) {
+		args := []string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=256x256:rate=30", "-frames:v", "2"}
+		args = append(args, VideoEncode{Encoder: EncoderVideoToolbox}.CodecArgs()...)
+		args = append(args, "-f", "null", "-")
+		_, err := t.run("", t.FFmpeg, args...)
+		c.Encoder = err == nil
+	}
+	return c, nil
+}
+
+// ResolveEncoder turns the profile's prepare.encoder setting into the
+// VideoEncode the re-encoding ops use. probe is called only when the answer
+// depends on it: "auto" uses VideoToolbox (hardware decode too, when listed)
+// on darwin when the encoder passed its test, else libx264; "videotoolbox"
+// fails when it did not; "x264" is today's libx264 path without hardware
+// decode. goos is runtime.GOOS (a parameter so tests can vary it).
+func ResolveEncoder(setting, goos string, probe func() (HWCaps, error)) (VideoEncode, error) {
+	x264 := VideoEncode{Encoder: EncoderX264, HWAccel: HWAccelNone}
+	switch setting {
+	case model.PrepareEncoderX264:
+		return x264, nil
+	case "", model.PrepareEncoderAuto, model.PrepareEncoderVideoToolbox:
+	default:
+		return x264, fmt.Errorf("prepare.encoder must be auto, videotoolbox or x264, got %q", setting)
+	}
+	explicit := setting == model.PrepareEncoderVideoToolbox
+	if !explicit && goos != "darwin" {
+		return x264, nil
+	}
+	caps, err := probe()
+	if err != nil {
+		return x264, err
+	}
+	if !caps.Encoder {
+		if explicit {
+			return x264, fmt.Errorf("prepare.encoder is videotoolbox but this ffmpeg cannot encode with %s (see logs/prepare.log); set prepare.encoder to auto or x264", EncoderVideoToolbox)
+		}
+		return x264, nil
+	}
+	vt := VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelNone}
+	if caps.HWAccel {
+		vt.HWAccel = HWAccelVideoToolbox
+	}
+	return vt, nil
 }

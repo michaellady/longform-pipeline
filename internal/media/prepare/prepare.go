@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/michaellady/longform-pipeline/internal/censor"
@@ -52,10 +53,16 @@ type State struct {
 	HDR               bool             `json:"hdr"`
 	TonemapFilter     string           `json:"tonemap_filter,omitempty"` // "zscale" | "tonemap-only"
 	Stabilized        bool             `json:"stabilized"`
+	StabilizeMethod   string           `json:"stabilize_method,omitempty"` // "vidstab" | "deshake ..." | "skipped: ..."
 	TranscribeSkipped bool             `json:"transcribe_skipped,omitempty"`
 	WhisperModel      string           `json:"whisper_model,omitempty"`
 	CensorList        string           `json:"censor_list,omitempty"`
 	CensorSpans       int              `json:"censor_spans"`
+	// Encoder and HWAccel record how this run re-encoded video (tonemap,
+	// stabilise): "h264_videotoolbox" | "libx264", and "videotoolbox" |
+	// "none". Empty when nothing was re-encoded.
+	Encoder string `json:"encoder,omitempty"`
+	HWAccel string `json:"hwaccel,omitempty"`
 }
 
 // Stamp records what a step consumed and produced.
@@ -77,6 +84,7 @@ type runner struct {
 	opts  Options
 	state *State
 	log   io.Writer
+	enc   *media.VideoEncode // resolved on first re-encode
 }
 
 // Run executes the stage. It is idempotent: a job already at or past
@@ -160,10 +168,16 @@ func (r *runner) run() error {
 		}
 	}
 	r.state.HDR = info.HDR()
+	r.state.Encoder, r.state.HWAccel = "", ""
 
 	// 2. Remux, or tonemap when HDR.
 	remuxSig := "copy"
+	var enc media.VideoEncode
 	if info.HDR() {
+		var err error
+		if enc, err = r.encoder(); err != nil {
+			return err
+		}
 		if r.state.TonemapFilter == "" {
 			has, err := r.opts.Tools.HasFilter("zscale")
 			if err != nil {
@@ -174,7 +188,7 @@ func (r *runner) run() error {
 				r.state.TonemapFilter = "zscale"
 			}
 		}
-		remuxSig = "tonemap:" + r.state.TonemapFilter
+		remuxSig = "tonemap:" + r.state.TonemapFilter + encoderSig(enc)
 	}
 	err := r.step("remux", src, RemuxOut, remuxSig, func() error {
 		if info.HDR() {
@@ -184,7 +198,7 @@ func (r *runner) run() error {
 				return perr
 			}
 			vf := media.TonemapFilter(r.state.TonemapFilter == "zscale", full.ColorTransfer, full.ColorPrimaries, full.ColorSpace)
-			return r.opts.Tools.Tonemap(job.Dir(), src, RemuxOut, vf)
+			return r.opts.Tools.Tonemap(job.Dir(), src, RemuxOut, vf, enc)
 		}
 		return r.opts.Tools.Remux(job.Dir(), src, RemuxOut)
 	})
@@ -195,6 +209,7 @@ func (r *runner) run() error {
 
 	// 3. Stabilise.
 	r.state.Stabilized = false
+	r.state.StabilizeMethod = ""
 	if prof.Stabilize.Enabled {
 		s := prof.Stabilize
 		// The local ffmpeg decides the method: two-pass vidstab when it is
@@ -204,14 +219,20 @@ func (r *runner) run() error {
 		// a reason to fail the job.
 		hasVidstab, _ := r.opts.Tools.HasFilter("vidstabdetect")
 		hasDeshake, _ := r.opts.Tools.HasFilter("deshake")
+		if hasVidstab || hasDeshake {
+			var err error
+			if enc, err = r.encoder(); err != nil {
+				return err
+			}
+		}
 		switch {
 		case hasVidstab:
-			sig := fmt.Sprintf("vidstab:%d:%d:%d", s.Shakiness, s.Smoothing, s.Zoom)
+			sig := fmt.Sprintf("vidstab:%d:%d:%d", s.Shakiness, s.Smoothing, s.Zoom) + encoderSig(enc)
 			err := r.step("stabilize", job.Path(RemuxOut), StabilizedOut, sig, func() error {
 				if err := r.opts.Tools.StabilizeDetect(job.Dir(), RemuxOut, media.StabilizeDetectFilter(s.Shakiness, TransformsOut)); err != nil {
 					return err
 				}
-				if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, media.StabilizeTransformFilter(s.Smoothing, s.Zoom, TransformsOut)); err != nil {
+				if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, media.StabilizeTransformFilter(s.Smoothing, s.Zoom, TransformsOut), enc); err != nil {
 					return err
 				}
 				at := info.DurationMs / 4
@@ -227,11 +248,11 @@ func (r *runner) run() error {
 			r.state.Stabilized = true
 			job.Artifacts.StabilizeBefore = StabilizeBefore
 			job.Artifacts.StabilizeAfter = StabilizeAfter
-			r.setExtra(job, "stabilize_method", "vidstab")
+			r.state.StabilizeMethod = "vidstab"
 		case hasDeshake:
-			sig := "deshake"
+			sig := "deshake" + encoderSig(enc)
 			err := r.step("stabilize", job.Path(RemuxOut), StabilizedOut, sig, func() error {
-				if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, "deshake"); err != nil {
+				if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, "deshake", enc); err != nil {
 					return err
 				}
 				at := info.DurationMs / 4
@@ -247,10 +268,10 @@ func (r *runner) run() error {
 			r.state.Stabilized = true
 			job.Artifacts.StabilizeBefore = StabilizeBefore
 			job.Artifacts.StabilizeAfter = StabilizeAfter
-			r.setExtra(job, "stabilize_method", "deshake (vidstab filter not in this ffmpeg)")
+			r.state.StabilizeMethod = "deshake (vidstab filter not in this ffmpeg)"
 		default:
 			fmt.Fprintln(os.Stderr, "stabilize   skip (this ffmpeg has neither vidstab nor deshake)")
-			r.setExtra(job, "stabilize_method", "skipped: no vidstab or deshake filter in ffmpeg")
+			r.state.StabilizeMethod = "skipped: no vidstab or deshake filter in ffmpeg"
 		}
 	}
 
@@ -377,8 +398,39 @@ func (r *runner) run() error {
 		return err
 	}
 	note := fmt.Sprintf("hdr=%v stabilized=%v words=%d censored_spans=%d mode=%s", r.state.HDR, r.state.Stabilized, len(tr.Words), len(cen.Spans), mode)
+	if r.state.Encoder != "" {
+		note += fmt.Sprintf(" encoder=%s hwaccel=%s", r.state.Encoder, r.state.HWAccel)
+	}
 	fmt.Fprintln(r.opts.Log, "prepared:", note)
 	return job.Advance(model.StatePrepared, "prepare", note)
+}
+
+// encoder resolves the profile's prepare.encoder on the first re-encode of
+// the run (probing the local ffmpeg only when the setting needs it) and
+// records the choice in the state.
+func (r *runner) encoder() (media.VideoEncode, error) {
+	if r.enc != nil {
+		return *r.enc, nil
+	}
+	enc, err := media.ResolveEncoder(r.prof.Prepare.Encoder, runtime.GOOS, r.opts.Tools.VideoToolboxCaps)
+	if err != nil {
+		return enc, fmt.Errorf("prepare: %w", err)
+	}
+	r.enc = &enc
+	r.state.Encoder, r.state.HWAccel = enc.EncoderName(), enc.HWAccelName()
+	fmt.Fprintf(r.opts.Log, "%-11s %s, decode hwaccel %s\n", "encoder", r.state.Encoder, r.state.HWAccel)
+	return enc, nil
+}
+
+// encoderSig is the step-signature suffix for a re-encode. libx264 adds
+// nothing, so stamps written before the encoder was selectable still match
+// it; any other encoder re-runs a step that libx264 produced (and back).
+// Hardware decode does not change the output and is not part of it.
+func encoderSig(enc media.VideoEncode) string {
+	if enc.EncoderName() == media.EncoderX264 {
+		return ""
+	}
+	return ":" + enc.EncoderName()
 }
 
 // step runs fn unless output exists and the recorded stamp for name matches
@@ -451,17 +503,4 @@ func (r *runner) saveState() error {
 	}
 	r.job.Extra["prepare"] = generic
 	return r.job.Save()
-}
-
-// setExtra records a note under job.extra.prepare.<key> without failing the run.
-func (r *runner) setExtra(job *model.Job, key string, val any) {
-	if job.Extra == nil {
-		job.Extra = map[string]any{}
-	}
-	prep, _ := job.Extra["prepare"].(map[string]any)
-	if prep == nil {
-		prep = map[string]any{}
-	}
-	prep[key] = val
-	job.Extra["prepare"] = prep
 }
