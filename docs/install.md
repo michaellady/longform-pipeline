@@ -12,19 +12,33 @@ pipx install osxphotos   # or: brew install osxphotos (only for a Photos album f
 ```
 
 - Homebrew's ffmpeg 9 ships without the `vidstabdetect` and `zscale` filters.
-  `longform prepare` copes: stabilisation falls back to `deshake` (or is
-  skipped when neither filter exists) and HDR recordings are tonemapped with
-  the plain `tonemap` filter. The method used is recorded under
-  `extra.prepare.stabilize_method` and `extra.prepare.tonemap_filter` in
-  `job.json`. Install an ffmpeg build with libvidstab and zimg to get the
-  two-pass stabiliser and the more accurate tonemap back.
-- On Apple Silicon, `longform prepare` re-encodes (HDR tonemap, stabilise) with
-  the Mac's hardware H.264 encoder, `h264_videotoolbox`, and decodes on the
-  media engine (`-hwaccel videotoolbox`); Homebrew's ffmpeg has both. It checks
-  the local ffmpeg first (a two-frame test encode) and uses `libx264` when the
-  encoder is missing or fails that test. The profile's
-  `prepare.encoder` (`profile-schema.md`) forces either; the choice is
-  recorded under `extra.prepare.encoder` and `extra.prepare.hwaccel`.
+  For stabilisation `longform prepare` copes: it falls back to `deshake` (or
+  skips the step when neither filter exists) and records the method under
+  `extra.prepare.stabilize_method` in `job.json`. Install an ffmpeg built with
+  libvidstab to get the two-pass stabiliser back.
+- HDR recordings (an iPhone's HDR video is HLG) are converted to BT.709 SDR in
+  one of two ways, recorded under `extra.prepare.tonemap_filter`:
+  - `scale_vt`: on a Mac whose ffmpeg has VideoToolbox hardware decode, a
+    working `h264_videotoolbox` encoder and the `scale_vt` filter (plus
+    `transpose_vt` for a portrait recording). Homebrew's ffmpeg on Apple
+    Silicon has all of them. The frames stay on the media engine from decoder
+    to encoder and Apple's own HDR conversion does the work: a 10 s slice of a
+    4K HLG iPhone recording took about 5 s.
+  - `zscale`: in software, with an ffmpeg built with zimg.
+
+  With neither, `longform prepare` refuses an HDR job: it exits `70` with a
+  message naming both ways, records `tonemap_filter` `unavailable`, and
+  encodes nothing. Earlier versions fell back to the plain `tonemap` filter,
+  which cannot linearise HLG and made deliveries far too dark (mean luma 65 of
+  255 on a frame that converts correctly at about 142).
+- On Apple Silicon, `longform prepare` re-encodes (HDR conversion, stabilise)
+  with the Mac's hardware H.264 encoder, `h264_videotoolbox`, and decodes on
+  the media engine (`-hwaccel videotoolbox`); Homebrew's ffmpeg has both. It
+  checks the local ffmpeg first (a two-frame test encode) and uses `libx264`
+  when the encoder is missing or fails that test. The profile's
+  `prepare.encoder` (`profile-schema.md`) forces either for the stabilise pass;
+  the choice is recorded under `extra.prepare.encoder` and
+  `extra.prepare.hwaccel`.
 - Claude Code with the Buffer MCP connected (statics) and, after the wizard, the
   OpusClip MCP (interactive sessions).
 - An OpusClip plan with API access (Pro or Enterprise). The key goes into

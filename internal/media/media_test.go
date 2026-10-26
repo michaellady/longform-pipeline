@@ -1,6 +1,7 @@
 package media
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -70,23 +71,148 @@ func TestParseProbe(t *testing.T) {
 	}
 }
 
-func TestTonemapFilter(t *testing.T) {
-	got := TonemapFilter(true, "arib-std-b67", "bt2020", "bt2020nc")
+func TestZscaleTonemapFilter(t *testing.T) {
+	got := ZscaleTonemapFilter("arib-std-b67", "bt2020", "bt2020nc")
 	want := "zscale=tin=arib-std-b67:pin=bt2020:min=bt2020nc:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
 	if got != want {
 		t.Errorf("zscale chain:\n got %s\nwant %s", got, want)
 	}
-	got = TonemapFilter(true, "smpte2084", "", "unknown")
+	got = ZscaleTonemapFilter("smpte2084", "", "unknown")
 	if !strings.HasPrefix(got, "zscale=tin=smpte2084:pin=bt2020:min=bt2020nc:t=linear") {
 		t.Errorf("defaults for missing primaries/matrix: %s", got)
 	}
-	got = TonemapFilter(false, "smpte2084", "bt2020", "bt2020nc")
-	if !strings.HasPrefix(got, "format=gbrpf32le,tonemap=tonemap=hable:desat=0,format=yuv420p,") ||
-		!strings.HasSuffix(got, ",setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv") {
-		t.Errorf("fallback chain must tonemap then tag BT.709 via setparams: %s", got)
+	// The tonemap filter must only ever see linearised input.
+	if i, j := strings.Index(got, "t=linear"), strings.Index(got, "tonemap="); i < 0 || j < i {
+		t.Errorf("tonemap before linearisation: %s", got)
 	}
-	if strings.Contains(got, "zscale") {
-		t.Error("fallback must not reference zscale")
+}
+
+func TestVTTranspose(t *testing.T) {
+	cases := []struct {
+		rotation int
+		dir      string
+		ok       bool
+	}{
+		{0, "", true},
+		{360, "", true},
+		{-90, "clock", true}, // an iPhone held upright; checked on the real slice
+		{270, "clock", true}, // Info.Rotation's normalised form of -90
+		{90, "cclock", true},
+		{-270, "cclock", true},
+		{180, "reversal", true},
+		{-180, "reversal", true},
+		{45, "", false},
+		{-30, "", false},
+	}
+	for _, c := range cases {
+		dir, ok := VTTranspose(c.rotation)
+		if dir != c.dir || ok != c.ok {
+			t.Errorf("VTTranspose(%d) = %q, %v; want %q, %v", c.rotation, dir, ok, c.dir, c.ok)
+		}
+	}
+}
+
+func TestScaleVTTonemapFilter(t *testing.T) {
+	const conv = "scale_vt=color_matrix=bt709:color_primaries=bt709:color_transfer=bt709"
+	cases := map[int]string{
+		0:   conv,
+		270: conv + ",transpose_vt=dir=clock",
+		-90: conv + ",transpose_vt=dir=clock",
+		90:  conv + ",transpose_vt=dir=cclock",
+		180: conv + ",transpose_vt=dir=reversal",
+	}
+	for rot, want := range cases {
+		if got := ScaleVTTonemapFilter(rot); got != want {
+			t.Errorf("rotation %d:\n got %s\nwant %s", rot, got, want)
+		}
+	}
+	// Frames must stay on the hardware all the way to the encoder.
+	for rot := range cases {
+		got := ScaleVTTonemapFilter(rot)
+		if strings.Contains(got, "hwdownload") || strings.Contains(got, "format=") || strings.Contains(got, "tonemap=") {
+			t.Errorf("rotation %d: software step in the hardware chain: %s", rot, got)
+		}
+	}
+}
+
+func TestChooseTonemap(t *testing.T) {
+	full := HWCaps{HWAccel: true, Encoder: true, ScaleVT: true, TransposeVT: true}
+	x264 := VideoEncode{Encoder: EncoderX264, HWAccel: HWAccelNone, FilterThreads: 6}
+	vt := VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox}
+	cases := []struct {
+		name         string
+		goos         string
+		enc          VideoEncode
+		rotation     int
+		caps         HWCaps
+		zscale       bool
+		want         string
+		wantCaps     bool // caps probed
+		wantZscale   bool // zscale probed
+		wantMissing  string
+		wantEncoder  string
+		wantHWFrames bool
+	}{
+		{"mac full portrait", "darwin", vt, 270, full, false, TonemapScaleVT, true, false, "", EncoderVideoToolbox, true},
+		{"mac full landscape", "darwin", vt, 0, full, true, TonemapScaleVT, true, false, "", EncoderVideoToolbox, true},
+		{"x264 setting still tonemaps on hardware", "darwin", x264, 270, full, true, TonemapScaleVT, true, false, "", EncoderVideoToolbox, true},
+		{"no transpose_vt is fine unrotated", "darwin", vt, 0, HWCaps{HWAccel: true, Encoder: true, ScaleVT: true}, false, TonemapScaleVT, true, false, "", EncoderVideoToolbox, true},
+		{"no transpose_vt for rotated falls to zscale", "darwin", vt, 90, HWCaps{HWAccel: true, Encoder: true, ScaleVT: true}, true, TonemapZscale, true, true, "", EncoderVideoToolbox, false},
+		{"no transpose_vt for rotated, no zscale", "darwin", vt, 90, HWCaps{HWAccel: true, Encoder: true, ScaleVT: true}, false, TonemapUnavailable, true, true, "no transpose_vt", "", false},
+		{"odd angle", "darwin", vt, 45, full, false, TonemapUnavailable, true, true, "not a multiple of 90", "", false},
+		{"encoder test failed, zscale", "darwin", x264, 270, HWCaps{HWAccel: true, ScaleVT: true, TransposeVT: true}, true, TonemapZscale, true, true, "", EncoderX264, false},
+		{"encoder test failed, no zscale", "darwin", x264, 270, HWCaps{HWAccel: true, ScaleVT: true, TransposeVT: true}, false, TonemapUnavailable, true, true, "failed its test encode", "", false},
+		{"no hwaccel", "darwin", vt, 0, HWCaps{Encoder: true, ScaleVT: true, TransposeVT: true}, false, TonemapUnavailable, true, true, "no -hwaccel videotoolbox", "", false},
+		{"no scale_vt (Homebrew ffmpeg 9 has it; an old one may not)", "darwin", vt, 0, HWCaps{HWAccel: true, Encoder: true, TransposeVT: true}, false, TonemapUnavailable, true, true, "no scale_vt", "", false},
+		{"linux zscale", "linux", x264, 270, full, true, TonemapZscale, false, true, "", EncoderX264, false},
+		{"linux nothing", "linux", x264, 0, full, false, TonemapUnavailable, false, true, "needs macOS", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var probedCaps, probedZ bool
+			plan, err := ChooseTonemap(c.goos, c.enc, c.rotation,
+				func() (HWCaps, error) { probedCaps = true; return c.caps, nil },
+				func() (bool, error) { probedZ = true; return c.zscale, nil })
+			if plan.Filter != c.want {
+				t.Fatalf("filter = %q, want %q (err %v)", plan.Filter, c.want, err)
+			}
+			if probedCaps != c.wantCaps || probedZ != c.wantZscale {
+				t.Errorf("probed caps=%v zscale=%v, want %v %v", probedCaps, probedZ, c.wantCaps, c.wantZscale)
+			}
+			if c.want == TonemapUnavailable {
+				if !errors.Is(err, ErrNoHDRConversion) {
+					t.Fatalf("want ErrNoHDRConversion, got %v", err)
+				}
+				msg := err.Error()
+				for _, s := range []string{c.wantMissing, "no zscale filter", "VideoToolbox", "scale_vt", "zimg", "zscale", "dark"} {
+					if !strings.Contains(msg, s) {
+						t.Errorf("message lacks %q: %s", s, msg)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Encode.EncoderName() != c.wantEncoder || plan.Encode.HWFrames != c.wantHWFrames {
+				t.Errorf("encode = %+v, want %s hwframes=%v", plan.Encode, c.wantEncoder, c.wantHWFrames)
+			}
+			if c.want == TonemapScaleVT {
+				if plan.Encode.HWAccelName() != HWAccelVideoToolbox || plan.Encode.FilterThreads != c.enc.FilterThreads {
+					t.Errorf("scale_vt must decode on VideoToolbox and keep filter threads: %+v", plan.Encode)
+				}
+			}
+			if c.want == TonemapZscale && plan.Encode != c.enc {
+				t.Errorf("zscale must use the profile's encoder %+v, got %+v", c.enc, plan.Encode)
+			}
+		})
+	}
+	// A probe failure is an error, not a silent fallback.
+	if _, err := ChooseTonemap("darwin", vt, 0, func() (HWCaps, error) { return HWCaps{}, ErrToolFailed }, func() (bool, error) { return true, nil }); !errors.Is(err, ErrToolFailed) {
+		t.Errorf("caps error: %v", err)
+	}
+	if _, err := ChooseTonemap("linux", vt, 0, nil, func() (bool, error) { return false, ErrToolFailed }); !errors.Is(err, ErrToolFailed) {
+		t.Errorf("zscale probe error: %v", err)
 	}
 }
 
@@ -137,8 +263,9 @@ func TestAudioFilters(t *testing.T) {
 }
 
 func TestParseFilterList(t *testing.T) {
-	out := []byte("Filters:\n T.. = Timeline support\n .S tonemap           V->V       Conversion\n TS zscale            V->V       Apply resizing\n .. vidstabdetect     V->V       Extract\n")
-	for _, name := range []string{"zscale", "tonemap", "vidstabdetect"} {
+	out := []byte("Filters:\n T.. = Timeline support\n .S tonemap           V->V       Conversion\n TS zscale            V->V       Apply resizing\n .. vidstabdetect     V->V       Extract\n" +
+		" .. scale_vt          V->V       Scale Videotoolbox frames\n .. transpose_vt      V->V       Transpose Videotoolbox frames\n")
+	for _, name := range []string{"zscale", "tonemap", "vidstabdetect", "scale_vt", "transpose_vt"} {
 		if !ParseFilterList(out, name) {
 			t.Errorf("%s not found", name)
 		}
@@ -249,6 +376,21 @@ func TestVideoEncodeArgs(t *testing.T) {
 		t.Errorf("videotoolbox tonemap:\n got %s\nwant %s", got, want)
 	}
 
+	// The scale_vt pass keeps frames on the hardware and leaves -colorspace
+	// out (ffmpeg would insert a software scaler the frames cannot enter).
+	hw := TonemapArgs("in.mov", "out.mp4", "VF", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox, HWFrames: true, FilterThreads: 14})
+	got = strings.Join(hw, " ")
+	want = "-hide_banner -loglevel error -y -filter_threads 14 -hwaccel videotoolbox -hwaccel_output_format videotoolbox_vld -i in.mov -map 0:v:0 -map 0:a? -vf VF " +
+		"-c:v h264_videotoolbox -q:v 65 -threads 0 " +
+		"-color_primaries bt709 -color_trc bt709 -color_range tv -c:a aac -b:a 192k -movflags +faststart out.mp4"
+	if got != want {
+		t.Errorf("hardware-frames tonemap:\n got %s\nwant %s", got, want)
+	}
+	// HWFrames without the VideoToolbox hwaccel adds nothing.
+	if sw := (VideoEncode{HWFrames: true}).InputArgs(); indexOf(sw, "-hwaccel_output_format") >= 0 {
+		t.Errorf("software decode must not ask for hardware frames: %v", sw)
+	}
+
 	st := StabilizeTransformArgs("a.mp4", "b.mp4", "deshake", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox})
 	if i, j := indexOf(st, "-hwaccel"), indexOf(st, "-i"); i < 0 || i > j || st[i+1] != HWAccelVideoToolbox {
 		t.Errorf("-hwaccel videotoolbox must precede -i: %v", st)
@@ -261,6 +403,9 @@ func TestVideoEncodeArgs(t *testing.T) {
 	}
 	if i := indexOf(st, "-c:a"); i < 0 || st[i+1] != "copy" || st[len(st)-1] != "b.mp4" {
 		t.Errorf("stabilize copies audio and writes the output last: %v", st)
+	}
+	if indexOf(st, "-hwaccel_output_format") >= 0 {
+		t.Errorf("stabilize runs software filters and needs software frames: %v", st)
 	}
 	if sx := StabilizeTransformArgs("a.mp4", "b.mp4", "deshake", VideoEncode{}); indexOf(sx, "-hwaccel") >= 0 || indexOf(sx, "libx264") < 0 {
 		t.Errorf("x264 stabilize must decode in software: %v", sx)

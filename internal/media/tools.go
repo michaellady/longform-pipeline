@@ -130,12 +130,15 @@ func ParseHWAccelList(out []byte, name string) bool {
 
 // HWCaps is what the local ffmpeg can do on Apple's media engine.
 type HWCaps struct {
-	HWAccel bool // `ffmpeg -hwaccels` lists videotoolbox (hardware decode)
-	Encoder bool // h264_videotoolbox is listed and passed a test encode
+	HWAccel     bool // `ffmpeg -hwaccels` lists videotoolbox (hardware decode)
+	Encoder     bool // h264_videotoolbox is listed and passed a test encode
+	ScaleVT     bool // `ffmpeg -filters` lists scale_vt (HDR -> BT.709 on hardware frames)
+	TransposeVT bool // `ffmpeg -filters` lists transpose_vt (rotation on hardware frames)
 }
 
-// VideoToolboxCaps probes the real ffmpeg. Being listed is not enough for the
-// encoder: it must also encode two test frames with the exact options prepare
+// VideoToolboxCaps probes the real ffmpeg: hardware decode, the encoder and
+// the two VideoToolbox filters the HDR conversion uses. Being listed is not
+// enough for the encoder: it must also encode two test frames with the exact options prepare
 // uses, because ffmpeg accepts -q:v for VideoToolbox only on Apple Silicon and
 // the encoder requires the hardware engine by default, which a VM (a CI
 // runner) may not expose. A failed test encode is a "no", not an error.
@@ -157,6 +160,12 @@ func (t Tools) VideoToolboxCaps() (HWCaps, error) {
 		_, err := t.run("", t.FFmpeg, args...)
 		c.Encoder = err == nil
 	}
+	out, err = t.run("", t.FFmpeg, "-hide_banner", "-filters")
+	if err != nil {
+		return c, err
+	}
+	c.ScaleVT = ParseFilterList(out, "scale_vt")
+	c.TransposeVT = ParseFilterList(out, "transpose_vt")
 	return c, nil
 }
 
@@ -194,4 +203,75 @@ func ResolveEncoder(setting, goos string, probe func() (HWCaps, error)) (VideoEn
 		vt.HWAccel = HWAccelVideoToolbox
 	}
 	return vt, nil
+}
+
+// Values of extra.prepare.tonemap_filter: how prepare converted an HDR source
+// to BT.709 SDR, or why it could not.
+const (
+	TonemapScaleVT     = "scale_vt"    // VideoToolbox decode, scale_vt (+ transpose_vt), h264_videotoolbox
+	TonemapZscale      = "zscale"      // software: zscale linearise, tonemap, zscale to BT.709
+	TonemapUnavailable = "unavailable" // neither: prepare failed instead of encoding
+)
+
+// ErrNoHDRConversion is returned for an HDR source when this ffmpeg has no
+// correct conversion to SDR. prepare fails rather than fall back to the plain
+// tonemap filter, whose output on unlinearised HLG is far too dark.
+var ErrNoHDRConversion = errors.New("this ffmpeg has no correct HDR to SDR conversion")
+
+// TonemapPlan is how prepare's HDR pass converts to BT.709 SDR.
+type TonemapPlan struct {
+	Filter string      // TonemapScaleVT | TonemapZscale | TonemapUnavailable
+	Encode VideoEncode // how that pass decodes and encodes
+}
+
+// ChooseTonemap picks the HDR -> BT.709 conversion. VideoToolbox comes first:
+// on darwin, with hardware decode, an h264_videotoolbox encoder that passed
+// its test encode, scale_vt, and transpose_vt when the source is rotated,
+// the frames stay on the media engine from decoder to encoder. scale_vt only
+// takes hardware frames and they can only go to that encoder, so this holds
+// whatever prepare.encoder says (x264 then applies to the stabilise pass
+// only). Otherwise zscale runs in software with enc, the profile's encoder.
+// Otherwise the plan is TonemapUnavailable and the error wraps
+// ErrNoHDRConversion, naming what is missing and the two ways to a correct
+// conversion. caps is called only on darwin and hasZscale only when
+// VideoToolbox cannot do it; goos is runtime.GOOS.
+func ChooseTonemap(goos string, enc VideoEncode, rotation int, caps func() (HWCaps, error), hasZscale func() (bool, error)) (TonemapPlan, error) {
+	var missing []string
+	if goos == "darwin" {
+		c, err := caps()
+		if err != nil {
+			return TonemapPlan{}, err
+		}
+		dir, rightAngle := VTTranspose(rotation)
+		switch {
+		case !c.HWAccel:
+			missing = append(missing, "no -hwaccel videotoolbox")
+		case !c.Encoder:
+			missing = append(missing, EncoderVideoToolbox+" missing or failed its test encode")
+		case !c.ScaleVT:
+			missing = append(missing, "no scale_vt filter")
+		case !rightAngle:
+			missing = append(missing, fmt.Sprintf("rotation %d is not a multiple of 90", rotation))
+		case dir != "" && !c.TransposeVT:
+			missing = append(missing, "no transpose_vt filter for the rotated source")
+		default:
+			return TonemapPlan{Filter: TonemapScaleVT, Encode: VideoEncode{
+				Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox, HWFrames: true, FilterThreads: enc.FilterThreads,
+			}}, nil
+		}
+	} else {
+		missing = append(missing, "VideoToolbox needs macOS")
+	}
+	has, err := hasZscale()
+	if err != nil {
+		return TonemapPlan{}, err
+	}
+	if has {
+		return TonemapPlan{Filter: TonemapZscale, Encode: enc}, nil
+	}
+	missing = append(missing, "no zscale filter")
+	return TonemapPlan{Filter: TonemapUnavailable}, fmt.Errorf("%w (%s). Either run on a Mac whose ffmpeg has VideoToolbox "+
+		"(-hwaccel videotoolbox, a working %s and the scale_vt filter, as Homebrew's ffmpeg on Apple Silicon does) "+
+		"or install an ffmpeg built with zimg (the zscale filter). Nothing was encoded: the tonemap filter without "+
+		"zscale makes a dark picture", ErrNoHDRConversion, strings.Join(missing, "; "), EncoderVideoToolbox)
 }

@@ -40,6 +40,11 @@ type VideoEncode struct {
 	Encoder       string // EncoderX264 (or "") | EncoderVideoToolbox
 	HWAccel       string // "" or HWAccelNone = software decode | HWAccelVideoToolbox
 	FilterThreads int    // -filter_threads; <= 0 = runtime.NumCPU()
+	// HWFrames keeps decoded frames on the media engine
+	// (-hwaccel_output_format videotoolbox_vld) for the *_vt filters and the
+	// hardware encoder. Only the scale_vt HDR pass sets it: those frames skip
+	// ffmpeg's autorotate, and software filters cannot read them.
+	HWFrames bool
 }
 
 // EncoderName is the ffmpeg encoder this setting runs.
@@ -62,8 +67,8 @@ func (e VideoEncode) HWAccelName() string {
 // InputArgs go before -i. -filter_threads sizes the filtergraph's thread
 // pool. -hwaccel decodes on Apple's media engine; without
 // -hwaccel_output_format the frames are copied back to system memory for the
-// software filters (tonemap, deshake), and a stream the engine cannot decode
-// falls back to software decode.
+// software filters (zscale, deshake), and a stream the engine cannot decode
+// falls back to software decode. With HWFrames they stay on the engine.
 func (e VideoEncode) InputArgs() []string {
 	n := e.FilterThreads
 	if n <= 0 {
@@ -72,6 +77,9 @@ func (e VideoEncode) InputArgs() []string {
 	args := []string{"-filter_threads", strconv.Itoa(n)}
 	if h := e.HWAccelName(); h != HWAccelNone {
 		args = append(args, "-hwaccel", h)
+		if e.HWFrames && h == HWAccelVideoToolbox {
+			args = append(args, "-hwaccel_output_format", "videotoolbox_vld")
+		}
 	}
 	return args
 }
@@ -97,18 +105,24 @@ func encodeArgs(in, out, vf string, enc VideoEncode, tailArgs ...string) []strin
 
 // TonemapArgs is the ffmpeg command line Tonemap runs (exported for tests).
 func TonemapArgs(in, out, vf string, enc VideoEncode) []string {
-	// The output is always tagged BT.709 SDR. With zscale the filter chain
-	// already converts to it; the tonemap-only fallback (an ffmpeg without
-	// zscale) approximates the conversion, and without these tags the file
-	// would still advertise the HDR transfer it no longer carries.
-	return encodeArgs(in, out, vf, enc,
-		"-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
-		"-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart")
+	// The output is always tagged BT.709 SDR: the chain has converted to it,
+	// and the tags keep the file from advertising the HDR transfer it no
+	// longer carries. On hardware frames -colorspace is left out: ffmpeg 9
+	// negotiates the matrix inside the filtergraph and would insert a software
+	// scaler, which cannot take videotoolbox_vld frames, so the encoder never
+	// opens. scale_vt has already tagged those frames BT.709.
+	tags := []string{"-color_primaries", "bt709", "-color_trc", "bt709"}
+	if !enc.HWFrames {
+		tags = append(tags, "-colorspace", "bt709")
+	}
+	tags = append(tags, "-color_range", "tv", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart")
+	return encodeArgs(in, out, vf, enc, tags...)
 }
 
-// Tonemap re-encodes HDR video to BT.709 SDR with the given -vf chain. ffmpeg's
-// autorotate (default on) applies the display matrix during decode, so the
-// output is upright without a rotation tag.
+// Tonemap re-encodes HDR video to BT.709 SDR with the given -vf chain. On
+// software frames ffmpeg's autorotate (default on) applies the display matrix
+// during decode; hardware frames skip it, so the scale_vt chain carries its
+// own transpose_vt. Either way the output is upright without a rotation tag.
 func (t Tools) Tonemap(dir, in, out, vf string, enc VideoEncode) error {
 	_, err := t.run(dir, t.FFmpeg, TonemapArgs(in, out, vf, enc)...)
 	return err
@@ -171,6 +185,25 @@ func (t Tools) MaxVolumeDB(dir, in string) (float64, error) {
 	m := maxVolumeRe.FindStringSubmatch(cap.String())
 	if m == nil {
 		return 0, fmt.Errorf("volumedetect: no max_volume in output")
+	}
+	return strconv.ParseFloat(m[1], 64)
+}
+
+var yavgRe = regexp.MustCompile(`lavfi\.signalstats\.YAVG=([0-9.]+)`)
+
+// MeanLuma is the mean 8-bit luma (signalstats YAVG on a 0..255 scale) of
+// the frame at atMs, decoded in software (so autorotated) and converted to
+// yuv420p. Tests use it as a brightness check on tonemapped output.
+func (t Tools) MeanLuma(dir, in string, atMs int64) (float64, error) {
+	var cap captureLog
+	tt := Tools{FFmpeg: t.FFmpeg, FFprobe: t.FFprobe, Log: &cap}
+	if _, err := tt.run(dir, t.FFmpeg, "-hide_banner", "-ss", FormatSeconds(atMs), "-i", in, "-frames:v", "1",
+		"-vf", "format=yuv420p,signalstats,metadata=print:key=lavfi.signalstats.YAVG", "-f", "null", "-"); err != nil {
+		return 0, err
+	}
+	m := yavgRe.FindStringSubmatch(cap.String())
+	if m == nil {
+		return 0, fmt.Errorf("signalstats: no YAVG in output")
 	}
 	return strconv.ParseFloat(m[1], 64)
 }
