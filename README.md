@@ -40,9 +40,12 @@ iPhone ─┬─ "Mark for <Brand>" ──▶ Photos album ──iCloud Photos�
 - `docs/` — `install.md` (plugin, binary, wizard, the full `longform` command table),
   `profile-schema.md` (every profile field with examples), `shortcut-recipe.md` (the
   iPhone Shortcuts), `cli-contract.md` (watcher, stage and Photos feed behaviour),
-  `operator-guide.md` (what a person does by hand).
-- `.github/workflows/release.yml` — tag `v*` builds darwin arm64 and amd64 tarballs
-  and publishes a release with a plain-English summary.
+  `operator-guide.md` (what a person does by hand), `releasing.md` (how versions and
+  releases are chosen).
+- `.github/workflows/release.yml` — every merge to `main` that changes more than docs
+  releases automatically: `cmd/release-meta` picks the next version, the workflow
+  builds darwin arm64 and amd64 tarballs and publishes a release with a
+  plain-English summary (`docs/releasing.md`).
 
 Brand profiles, templates, voice corpora, keys and tag ids live under
 `~/.config/longform-pipeline/`, never in this repo. Jobs live under
@@ -105,13 +108,27 @@ record; the watcher's `longform monitor` reads each OpusClip schedule back
 ## Development
 
 ```bash
-make check          # vet + test + build
-make release-dry    # both darwin tarballs into dist/, no tag
-make fixture        # regenerate the dry-run video
+make check            # vet + test + build
+make release-preview  # what merging main would release, and why
+make release-dry      # both darwin tarballs into dist/, no tag
+make fixture          # regenerate the dry-run video
 ```
 
-Git: feature branch, PR, never push `main` directly. Releases get a plain-English
-title and a `## Summary` written for a non-technical reader.
+Git: feature branch, PR, never push `main` directly.
+
+## Releases
+
+Releases are automatic: merging a PR to `main` publishes the next version, and
+`make install` fetches the latest one. Nobody pushes tags.
+
+- No label: a patch release (v0.2.1 → v0.2.2).
+- `release:minor` or `release:major` on the PR: v0.3.0 or v1.0.0 instead.
+- Docs-only merges (`docs/**`, `*.md`, `.github/**`) and PRs labelled `release:skip`
+  do not release; `release:force` releases anyway.
+
+The release title is the PR title and its `## Summary` is the PR's own `## Summary`
+section, so write that section in plain English for a non-technical reader.
+Manual runs and re-releasing: `docs/releasing.md`.
 
 Design: the plan this was built from (`longform-video-pipeline-plan.md` in the author's
 dev folder) records every decision (D1–D27) and the ticket order.

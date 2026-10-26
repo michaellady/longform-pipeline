@@ -77,6 +77,12 @@ sudo mv longform /usr/local/bin/
 The wizard finds the binary at `$LONGFORM_BIN`, then
 `<plugin>/scripts/longform`, then `PATH`.
 
+Releases are automatic: every merge to `main` that changes more than docs publishes
+a new version (a patch by default; a `release:minor` or `release:major` label on the
+PR bumps further), so `make install` always fetches the newest merged code. To
+update, run `make install` again. How versions are chosen, what skips a release, and
+how to re-release: `docs/releasing.md`.
+
 ## 4. Wizard
 
 ```
@@ -127,6 +133,7 @@ configured, and as a macOS notification.
 | `make launchd-uninstall` | unload and delete the LaunchAgent |
 | `make fixture` | generate `plugins/longform-pipeline/fixtures/sample-30s.mp4` with ffmpeg |
 | `make release-dry` | build both darwin tarballs plus sha256 into `dist/` without tagging |
+| `make release-preview` | print the version, title, summary and release decision the release workflow would make for `HEAD` |
 
 ## Command table
 

@@ -1,0 +1,1 @@
+{"body": "## Summary\r\nThe watcher now reads a Photos album.\r\nNothing else changes.\r\n\r\n### Test plan\r\n- go test ./...\r\n", "labels": [{"id": "LA_1", "name": "release:minor", "description": "Merging this releases a new minor version", "color": "fbca04"}], "number": 20, "title": "watcher: Photos album feed"}

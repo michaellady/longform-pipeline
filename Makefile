@@ -6,7 +6,7 @@ ARCH     := $(shell uname -m | sed s/x86_64/amd64/)
 SETUP    := plugins/longform-pipeline/scripts/setup.sh
 FIXTURE  := plugins/longform-pipeline/fixtures/sample-30s.mp4
 
-.PHONY: build test vet check install clean launchd-install launchd-uninstall fixture release-dry
+.PHONY: build test vet check install clean launchd-install launchd-uninstall fixture release-dry release-preview
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/longform
@@ -47,8 +47,10 @@ launchd-uninstall:
 fixture:
 	bash $(SETUP) fixture $(FIXTURE)
 
-# release-dry mirrors .github/workflows/release.yml locally: both darwin
-# tarballs plus sha256 files into dist/, no tag, no upload.
+# release-dry mirrors the build job of .github/workflows/release.yml locally:
+# both darwin tarballs plus sha256 files into dist/, no tag, no upload. The
+# version defaults to `git describe`; `make release-dry VERSION=v0.3.0` names
+# the tarballs as the release would.
 release-dry:
 	rm -rf dist && mkdir -p dist
 	for arch in arm64 amd64; do \
@@ -59,3 +61,9 @@ release-dry:
 	    rm longform ); \
 	done
 	ls -la dist
+
+# release-preview prints what the release workflow would decide for HEAD (run
+# it on an up-to-date main): version, bump, title, summary, release or not,
+# and why. Read-only: it runs git and `gh pr view`, nothing else.
+release-preview:
+	go run ./cmd/release-meta --repo $(REPO)
