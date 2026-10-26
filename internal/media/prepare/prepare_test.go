@@ -363,6 +363,97 @@ func testPrepareHDRTonemap(t *testing.T, tools media.Tools, ec encoderCase, rota
 	}
 }
 
+// makeGapFixture is a 4 s 30 fps HLG recording held upright (rotation -90)
+// that is missing frames 45 and 46, timestamps kept: one packet lasts three
+// frame times and avg_frame_rate is 59/2 while r_frame_rate stays 30/1, the
+// shape of the variable-rate delivery that broke OpusClip. Encoded without
+// -fps_mode cfr, the gap survives into the output.
+func makeGapFixture(t *testing.T, tools media.Tools, dir string) string {
+	t.Helper()
+	gappy := filepath.Join(dir, "gappy.mov")
+	if b, err := exec.Command(tools.FFmpeg, "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "4",
+		"-vf", "select='not(between(n,45,46))',format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc",
+		"-fps_mode", "vfr", "-c:v", "libx264", "-c:a", "aac", "-shortest", gappy).CombinedOutput(); err != nil {
+		t.Fatalf("gap fixture: %v\n%s", err, b)
+	}
+	out := filepath.Join(dir, "fixture.mov")
+	if b, err := exec.Command(tools.FFmpeg, "-hide_banner", "-loglevel", "error", "-y", "-display_rotation", "-90",
+		"-i", gappy, "-c", "copy", out).CombinedOutput(); err != nil {
+		t.Fatalf("rotated gap fixture: %v\n%s", err, b)
+	}
+	return out
+}
+
+// assertConstantRate checks a job file the way OpusClip needs it: every
+// packet on the 30 fps grid, and avg_frame_rate equal to r_frame_rate.
+func assertConstantRate(t *testing.T, tools media.Tools, path, rate string) {
+	t.Helper()
+	frame, _ := media.FrameDuration(rate)
+	rep, err := tools.CheckTiming(path, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := tools.Probe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%s: avg_frame_rate %s r_frame_rate %s; %s", filepath.Base(path), info.FPS, info.RFrameRate, rep.Summary())
+	if !rep.OK {
+		t.Errorf("%s is not constant frame rate: %s", path, rep.Summary())
+	}
+	if info.FPS != info.RFrameRate || info.RFrameRate != rate {
+		t.Errorf("%s: avg_frame_rate %s, r_frame_rate %s, want both %s", path, info.FPS, info.RFrameRate, rate)
+	}
+}
+
+// A source with dropped frames through tonemap and stabilise, on the
+// hardware path and on libx264: every encode comes out constant 30 fps (the
+// gap filled by repeated frames) and passes the timing check.
+func TestIntegrationPrepareConstantFrameRate(t *testing.T) {
+	tools := integrationTools(t)
+	t.Setenv("LONGFORM_SKIP_TRANSCRIBE", "1")
+	for _, ec := range encoderCases(t, tools) {
+		t.Run(ec.setting, func(t *testing.T) {
+			fixture := makeGapFixture(t, tools, t.TempDir())
+			if rep, err := tools.CheckTiming(fixture, 1.0/30); err != nil || rep.OK {
+				t.Fatalf("the fixture must have irregular timing: %+v %v", rep, err)
+			} else {
+				t.Logf("fixture: %s", rep.Summary())
+			}
+			plan, err := expectedTonemap(t, tools, media.VideoEncode{Encoder: ec.encoder, HWAccel: ec.hwaccel}, -90)
+			if plan.Filter == media.TonemapUnavailable {
+				t.Skipf("no HDR conversion on this machine: %v", err)
+			}
+			job := stagedJob(t, fixture)
+			prof := &model.Profile{Name: "test", Inbox: "/tmp", Orientation: "portrait",
+				Prepare:   model.PrepareConfig{Encoder: ec.setting},
+				Stabilize: model.StabilizeConfig{Enabled: true, Shakiness: 5, Smoothing: 10},
+				Censor:    model.CensorConfig{Enabled: true, Mode: "beep"}}
+			var progress strings.Builder
+			if err := Run(job, prof, Options{Tools: tools, Log: &progress}); err != nil {
+				t.Fatalf("prepare: %v\n%s", err, progress.String())
+			}
+			t.Logf("progress:\n%s", progress.String())
+			ex, _ := job.Extra["prepare"].(map[string]any)
+			tc, _ := ex["timing_check"].(map[string]any)
+			if ex["tonemap_filter"] != plan.Filter || ex["stabilized"] != true || ex["frame_rate"] != "30/1" {
+				t.Errorf("extra.prepare = %+v", ex)
+			}
+			if tc["file"] != DeliveryOut || tc["ok"] != true || tc["enforced"] != true {
+				t.Errorf("timing_check = %+v", tc)
+			}
+			for _, rel := range []string{RemuxOut, StabilizedOut, DeliveryOut} {
+				assertConstantRate(t, tools, job.Path(rel), "30/1")
+			}
+			// 118 frames over 4 s: the two-frame gap is filled.
+			if d := job.Delivery; d.DurationMs < 3990 || d.FPS != "30/1" {
+				t.Errorf("delivery %+v", d)
+			}
+		})
+	}
+}
+
 // A real iPhone HDR recording through prepare: set LONGFORM_HDR_SLICE to a
 // short HLG clip (a 10 s slice of a 4K portrait recording was used). The
 // frame at 5 s must be properly exposed: about 147 through VideoToolbox, 65
@@ -383,8 +474,9 @@ func TestIntegrationPrepareRealHDRSlice(t *testing.T) {
 	}
 	job := stagedJob(t, slice)
 	prof := &model.Profile{Name: "test", Inbox: "/tmp", Orientation: "portrait",
-		Prepare: model.PrepareConfig{Encoder: model.PrepareEncoderAuto},
-		Censor:  model.CensorConfig{Enabled: true, Mode: "beep"}}
+		Prepare:   model.PrepareConfig{Encoder: model.PrepareEncoderAuto},
+		Stabilize: model.StabilizeConfig{Enabled: true, Shakiness: 5, Smoothing: 10},
+		Censor:    model.CensorConfig{Enabled: true, Mode: "beep"}}
 	var progress strings.Builder
 	started := time.Now()
 	if err := Run(job, prof, Options{Tools: tools, Log: &progress}); err != nil {
@@ -407,6 +499,18 @@ func TestIntegrationPrepareRealHDRSlice(t *testing.T) {
 	t.Logf("delivery mean luma at 5 s: %.1f", y)
 	if y < 110 || y > 190 {
 		t.Errorf("delivery mean luma at 5 s = %.1f, want 110..190", y)
+	}
+	// Tonemap, stabilise and delivery all constant frame rate at the
+	// source's rate.
+	rate := src.Rate()
+	if ex["frame_rate"] != rate || ex["stabilized"] != true {
+		t.Errorf("extra.prepare frame_rate %v stabilized %v, want %s true", ex["frame_rate"], ex["stabilized"], rate)
+	}
+	if tc, _ := ex["timing_check"].(map[string]any); tc["file"] != DeliveryOut || tc["ok"] != true || tc["enforced"] != true {
+		t.Errorf("timing_check = %+v", tc)
+	}
+	for _, rel := range []string{RemuxOut, StabilizedOut, DeliveryOut} {
+		assertConstantRate(t, tools, job.Path(rel), rate)
 	}
 }
 
@@ -511,14 +615,18 @@ func TestRunRefusesWrongState(t *testing.T) {
 
 // The test binary doubles as a fake ffmpeg and ffprobe: with
 // LONGFORM_FFMPEG_STUB=1 it appends its argv to calls.log in
-// LONGFORM_FFMPEG_STUB_DIR, prints probe.json from there for ffprobe, lists
-// the hwaccels, encoders and filters named (space-separated) in
+// LONGFORM_FFMPEG_STUB_DIR, prints probe.json from there for ffprobe's
+// stream probe and packets.txt for its packet listing, lists the hwaccels,
+// encoders and filters named (space-separated) in
 // LONGFORM_FFMPEG_STUB_{HWACCELS,ENCODERS,FILTERS}, passes the VideoToolbox
 // test encode, and fails every other call (an encode), so a test sees what
-// prepare would run up to its first encode without media or hardware.
+// prepare would run up to its first encode without media or hardware. With
+// LONGFORM_FFMPEG_STUB_ENCODE=1 an encode instead writes a placeholder at its
+// output path and succeeds, so prepare runs to the end on stub media.
 const (
-	ffStubEnv    = "LONGFORM_FFMPEG_STUB"
-	ffStubDirEnv = "LONGFORM_FFMPEG_STUB_DIR"
+	ffStubEnv       = "LONGFORM_FFMPEG_STUB"
+	ffStubDirEnv    = "LONGFORM_FFMPEG_STUB_DIR"
+	ffStubEncodeEnv = "LONGFORM_FFMPEG_STUB_ENCODE"
 )
 
 func TestMain(m *testing.M) {
@@ -546,6 +654,12 @@ func ffStub(args []string) int {
 			return 1
 		}
 		os.Stdout.Write(b)
+	case has("-show_entries"): // media.Tools.Packets
+		b, err := os.ReadFile(filepath.Join(dir, "packets.txt"))
+		if err != nil {
+			return 1
+		}
+		os.Stdout.Write(b)
 	case has("-hwaccels"):
 		fmt.Println("Hardware acceleration methods:")
 		for _, n := range list("LONGFORM_FFMPEG_STUB_HWACCELS") {
@@ -562,6 +676,12 @@ func ffStub(args []string) int {
 			fmt.Printf(" .. %-17s V->V       stub filter\n", n)
 		}
 	case has("lavfi"): // VideoToolboxCaps' two-frame test encode
+	case os.Getenv(ffStubEncodeEnv) == "1" && len(args) > 0:
+		// cwd is the job dir, as for the real ffmpeg; the output is last.
+		if err := os.WriteFile(args[len(args)-1], []byte("stub encode"), 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "stub:", err)
+			return 1
+		}
 	default:
 		fmt.Fprintln(os.Stderr, "stub: no encodes here")
 		return 1
@@ -699,7 +819,7 @@ func TestPrepareHDRScaleVTCommand(t *testing.T) {
 	for _, want := range []string{
 		"-hwaccel videotoolbox -hwaccel_output_format videotoolbox_vld -i ",
 		"-vf scale_vt=color_matrix=bt709:color_primaries=bt709:color_transfer=bt709,transpose_vt=dir=clock ",
-		"-c:v h264_videotoolbox -q:v 65",
+		"-c:v h264_videotoolbox -q:v 65 -threads 0 -fps_mode cfr -r 30/1 ",
 		"-color_primaries bt709 -color_trc bt709 -color_range tv",
 	} {
 		if !strings.Contains(encode, want) {
@@ -724,4 +844,215 @@ func TestPrepareHDRScaleVTCommand(t *testing.T) {
 	if !strings.Contains(progress.String(), "tonemap     scale_vt (VideoToolbox decode and encode, transpose clock)") {
 		t.Errorf("progress:\n%s", progress.String())
 	}
+}
+
+// stubPackets renders n packets at 30 fps as ffprobe's compact listing, the
+// frames listed in held shown for two frame times (each pushing later frames
+// back by one), as the VideoToolbox passes wrote a recording missing frames.
+func stubPackets(n int, held ...int) string {
+	var b strings.Builder
+	slot := 0
+	for i := 0; i < n; i++ {
+		d := 1
+		for _, h := range held {
+			if h == i {
+				d = 2
+			}
+		}
+		fmt.Fprintf(&b, "pts_time=%.6f|duration_time=%.6f|flags=___\n", float64(slot)/30, float64(d)/30)
+		slot += d
+	}
+	return b.String()
+}
+
+// stubSDRProbe is a stabilise-free SDR recording: prepare stream-copies it.
+const stubSDRProbe = `{
+  "streams": [
+    {"index": 0, "codec_name": "h264", "codec_type": "video", "width": 1920, "height": 1080, "pix_fmt": "yuv420p",
+     "color_transfer": "bt709", "r_frame_rate": "30/1", "avg_frame_rate": "1799/60", "duration": "10.000000"},
+    {"index": 1, "codec_name": "aac", "codec_type": "audio", "sample_rate": "48000", "channels": 2, "channel_layout": "stereo",
+     "r_frame_rate": "0/0", "avg_frame_rate": "0/0", "duration": "10.000000"}
+  ],
+  "format": {"nb_streams": 2, "format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "10.000000"}
+}`
+
+// Every file prepare encodes is checked for constant frame rate before the
+// job can be prepared (and so uploaded). The packet listing comes from the
+// stub, so this runs without media on any OS.
+func TestPrepareTimingCheck(t *testing.T) {
+	const filters = "deshake scale_vt transpose_vt zscale"
+	prof := &model.Profile{Name: "test", Inbox: "/tmp", Prepare: model.PrepareConfig{Encoder: model.PrepareEncoderX264},
+		Stabilize: model.StabilizeConfig{Enabled: true}}
+	setup := func(t *testing.T, packets string) (*model.Job, media.Tools, string) {
+		t.Helper()
+		job, tools, dir := stubJob(t, "videotoolbox", "libx264 h264_videotoolbox", filters)
+		t.Setenv(ffStubEncodeEnv, "1")
+		t.Setenv("LONGFORM_SKIP_TRANSCRIBE", "1")
+		if err := os.WriteFile(filepath.Join(dir, "packets.txt"), []byte(packets), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return job, tools, dir
+	}
+	timing := func(t *testing.T, job *model.Job) (*model.Job, map[string]any) {
+		t.Helper()
+		loaded, err := model.LoadJob(job.Dir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ex, _ := loaded.Extra["prepare"].(map[string]any)
+		tc, _ := ex["timing_check"].(map[string]any)
+		if tc == nil {
+			t.Fatalf("no extra.prepare.timing_check: %+v", ex)
+		}
+		if ex["frame_rate"] != "30/1" {
+			t.Errorf("frame_rate = %v, want 30/1", ex["frame_rate"])
+		}
+		return loaded, tc
+	}
+
+	// The tonemap output holds one frame for two frame times: prepare stops
+	// there (before stabilise, transcript and delivery), leaves the job
+	// staged with the error set, and records the check.
+	t.Run("irregular encode fails the step", func(t *testing.T) {
+		job, tools, dir := setup(t, stubPackets(300, 120))
+		var progress strings.Builder
+		err := Run(job, prof, Options{Tools: tools, Log: &progress})
+		if !errors.Is(err, media.ErrIrregularTiming) || !strings.Contains(err.Error(), "remux: "+RemuxOut) {
+			t.Fatalf("want ErrIrregularTiming from the remux step, got %v\n%s", err, progress.String())
+		}
+		if errors.Is(err, media.ErrToolFailed) {
+			t.Error("a timing failure must not look like an ffmpeg crash")
+		}
+		for _, want := range []string{"300 packets", "1 packet durations and 1 gaps", "at 4.000 s", "Nothing is uploaded"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error lacks %q: %v", want, err)
+			}
+		}
+		loaded, tc := timing(t, job)
+		if loaded.State != model.StateStaged || !strings.Contains(loaded.Error, "irregular frame timing") {
+			t.Errorf("state %s error %q", loaded.State, loaded.Error)
+		}
+		if tc["file"] != RemuxOut || tc["ok"] != false || tc["enforced"] != true || tc["packets"] != float64(300) ||
+			tc["nominal_ms"] != 33.333 || tc["bad_durations"] != float64(1) || tc["bad_gaps"] != float64(1) {
+			t.Errorf("timing_check = %+v", tc)
+		}
+		if st := loadState(loaded); st.Steps["remux"].Sig != "" {
+			t.Errorf("the failed remux step was stamped: %+v", st.Steps["remux"])
+		}
+		for _, rel := range []string{StabilizedOut, DeliveryOut} {
+			if _, err := os.Stat(job.Path(rel)); err == nil {
+				t.Errorf("%s written after the timing failure", rel)
+			}
+		}
+		if log, _ := os.ReadFile(job.Path(LogOut)); !strings.Contains(string(log), "timing "+RemuxOut+": 300 packets") {
+			t.Errorf("prepare.log lacks the timing line:\n%s", log)
+		}
+		var encodes int
+		for _, c := range stubCalls(t, dir) {
+			if strings.Contains(c, " -vf ") {
+				encodes++
+				if !strings.Contains(c, " -fps_mode cfr -r 30/1 ") {
+					t.Errorf("encode without -fps_mode cfr -r 30/1: %s", c)
+				}
+			}
+		}
+		if encodes != 1 {
+			t.Errorf("%d encodes, want the tonemap only", encodes)
+		}
+	})
+
+	// Constant frame rate throughout: tonemap, stabilise and delivery all pass
+	// and the delivery's check is the one recorded.
+	t.Run("constant rate prepares", func(t *testing.T) {
+		job, tools, dir := setup(t, stubPackets(300))
+		var progress strings.Builder
+		if err := Run(job, prof, Options{Tools: tools, Log: &progress}); err != nil {
+			t.Fatalf("prepare: %v\n%s", err, progress.String())
+		}
+		loaded, tc := timing(t, job)
+		if loaded.State != model.StatePrepared || loaded.Error != "" {
+			t.Errorf("state %s error %q", loaded.State, loaded.Error)
+		}
+		if tc["file"] != DeliveryOut || tc["ok"] != true || tc["enforced"] != true || tc["max_deviation_ms"] != float64(0) {
+			t.Errorf("timing_check = %+v", tc)
+		}
+		for _, rel := range []string{RemuxOut, StabilizedOut, DeliveryOut} {
+			if !strings.Contains(progress.String(), "timing      ok   "+rel+" (300 packets)") {
+				t.Errorf("progress lacks the %s check:\n%s", rel, progress.String())
+			}
+		}
+		st := loadState(loaded)
+		if !strings.HasSuffix(st.Steps["remux"].Sig, ":cfr=30/1") || !strings.HasSuffix(st.Steps["stabilize"].Sig, ":cfr=30/1") {
+			t.Errorf("step signatures lack the rate: remux %q stabilize %q", st.Steps["remux"].Sig, st.Steps["stabilize"].Sig)
+		}
+		var encodes int
+		for _, c := range stubCalls(t, dir) {
+			if strings.Contains(c, " -vf ") {
+				encodes++
+				if !strings.Contains(c, " -fps_mode cfr -r 30/1 ") {
+					t.Errorf("encode without -fps_mode cfr -r 30/1: %s", c)
+				}
+			}
+		}
+		if encodes != 2 {
+			t.Errorf("%d encodes, want tonemap and stabilise", encodes)
+		}
+	})
+
+	// An SDR source prepare does not encode is stream-copied as recorded: its
+	// own irregular timing is a warning, not a failure.
+	t.Run("stream-copied source warns", func(t *testing.T) {
+		job, tools, dir := setup(t, stubPackets(300, 120))
+		if err := os.WriteFile(filepath.Join(dir, "probe.json"), []byte(stubSDRProbe), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		plain := *prof
+		plain.Stabilize.Enabled = false
+		var progress strings.Builder
+		if err := Run(job, &plain, Options{Tools: tools, Log: &progress}); err != nil {
+			t.Fatalf("prepare: %v\n%s", err, progress.String())
+		}
+		loaded, tc := timing(t, job)
+		if loaded.State != model.StatePrepared {
+			t.Errorf("state %s", loaded.State)
+		}
+		if tc["file"] != DeliveryOut || tc["ok"] != false || tc["enforced"] != false {
+			t.Errorf("timing_check = %+v", tc)
+		}
+		if !strings.Contains(progress.String(), "WARN "+DeliveryOut+" is the source's video, stream-copied") {
+			t.Errorf("progress lacks the warning:\n%s", progress.String())
+		}
+	})
+
+	// A fractional source rate is kept (exactly, from a fresh probe) and
+	// warned about: OpusClip does not support it.
+	t.Run("fractional rate warns", func(t *testing.T) {
+		job, tools, dir := setup(t, "")
+		ntsc := strings.ReplaceAll(stubHDRProbe, `"r_frame_rate": "30/1", "avg_frame_rate": "30/1"`, `"r_frame_rate": "30000/1001", "avg_frame_rate": "30000/1001"`)
+		if err := os.WriteFile(filepath.Join(dir, "probe.json"), []byte(ntsc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var b strings.Builder
+		for i := 0; i < 300; i++ {
+			fmt.Fprintf(&b, "pts_time=%.6f|duration_time=%.6f|flags=___\n", float64(i)*1001/30000, 1001.0/30000)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "packets.txt"), []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var progress strings.Builder
+		if err := Run(job, prof, Options{Tools: tools, Log: &progress}); err != nil {
+			t.Fatalf("prepare: %v\n%s", err, progress.String())
+		}
+		if !strings.Contains(progress.String(), "WARN source frame rate 30000/1001 is not a whole number") {
+			t.Errorf("progress lacks the fractional-rate warning:\n%s", progress.String())
+		}
+		if log, _ := os.ReadFile(job.Path(LogOut)); !strings.Contains(string(log), "WARN: source frame rate 30000/1001") {
+			t.Errorf("prepare.log lacks the warning:\n%s", log)
+		}
+		for _, c := range stubCalls(t, dir) {
+			if strings.Contains(c, " -vf ") && !strings.Contains(c, " -fps_mode cfr -r 30000/1001 ") {
+				t.Errorf("encode not at 30000/1001: %s", c)
+			}
+		}
+	})
 }

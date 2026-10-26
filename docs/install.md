@@ -39,6 +39,27 @@ pipx install osxphotos   # or: brew install osxphotos (only for a Photos album f
   `prepare.encoder` (`profile-schema.md`) forces either for the stabilise pass;
   the choice is recorded under `extra.prepare.encoder` and
   `extra.prepare.hwaccel`.
+- Every encode `longform prepare` makes (the HDR conversion and the stabilise
+  pass, on either encoder) is constant frame rate at the source's own rate
+  (`-fps_mode cfr -r <r_frame_rate>`, recorded as `extra.prepare.frame_rate`).
+  Without it ffmpeg wrote an mp4 at variable rate: a 24-minute iPhone
+  recording came out with two frames held for two frame times
+  (`avg_frame_rate` 2265/76), and OpusClip's full-video render of it covered
+  half the video once and stalled the next time. A source rate that is not a
+  whole number (29.97) is kept and logged as a `WARN` in `logs/prepare.log`:
+  OpusClip does not support fractional rates.
+- After each encode and on `delivery.mp4`, prepare lists the video's packet
+  times with ffprobe (one read through the video stream, no decode: 0.8 s for
+  a 4.7 GB, 24-minute file in the page cache, 0.04 s for a 10 s 4K slice) and
+  fails the job when any packet's duration is more than
+  10% off one frame or two consecutive frames are more than 1.5 frames apart:
+  `longform prepare` exits `70`, `job.error` names the file and the times, the
+  job stays `staged`, and nothing is uploaded. The result is recorded as
+  `extra.prepare.timing_check` (`packets`, `nominal_ms`, `max_deviation_ms`,
+  `max_gap_ms`, `ok`, and where it failed). An iPhone's own timestamp jitter
+  (1/600 s) passes. A source prepare does not encode (SDR with stabilise off,
+  stream-copied) is checked too but only warned about, since its timing is the
+  recording's own (a screen recording is variable rate by design).
 - Claude Code with the Buffer MCP connected (statics) and, after the wizard, the
   OpusClip MCP (interactive sessions).
 - An OpusClip plan with API access (Pro or Enterprise). The key goes into

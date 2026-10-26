@@ -65,9 +65,10 @@ func runPrepare(args []string) int {
 	err = prepare.Run(job, prof, prepare.Options{Tools: tools, WhisperCLI: *whisper, CensorList: *censorList, Log: os.Stdout})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "prepare:", err)
-		// 70: ffmpeg failed, or the source is HDR and this ffmpeg cannot
-		// convert it correctly (a tool problem on this Mac, not a bad job).
-		if errors.Is(err, media.ErrToolFailed) || errors.Is(err, media.ErrNoHDRConversion) {
+		// 70: ffmpeg failed, the source is HDR and this ffmpeg cannot
+		// convert it correctly, or an encode came out at an irregular frame
+		// rate (a tool problem on this Mac, not a bad job).
+		if errors.Is(err, media.ErrToolFailed) || errors.Is(err, media.ErrNoHDRConversion) || errors.Is(err, media.ErrIrregularTiming) {
 			return 70
 		}
 		return 65
