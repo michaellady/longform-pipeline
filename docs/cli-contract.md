@@ -143,6 +143,11 @@ Details:
   involved. The launchd plist should also set `AbandonProcessGroup` to true
   so the detached claude session outlives the `--once` run (the session is
   started in its own session id regardless).
+- The LaunchAgent runs at standard priority: `ProcessType` `Standard`,
+  `Nice` 0, no `LowPriorityIO`. The exec'd steps inherit the agent's policy,
+  and under `Background` macOS keeps them (ffmpeg, whisper-cli) on the
+  efficiency cores at throttled IO; a 24-minute 4K HDR prepare ran at about
+  1.4 s of video per minute that way.
 - Lock held: `<DATA>/watch.lock`. A second invocation exits `75` without
   doing anything; a stale lock from a dead pid is taken over.
 - Exit `0` after a pass even when individual jobs failed a step; `70` when

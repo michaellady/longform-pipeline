@@ -18,6 +18,13 @@ pipx install osxphotos   # or: brew install osxphotos (only for a Photos album f
   `extra.prepare.stabilize_method` and `extra.prepare.tonemap_filter` in
   `job.json`. Install an ffmpeg build with libvidstab and zimg to get the
   two-pass stabiliser and the more accurate tonemap back.
+- On Apple Silicon, `longform prepare` re-encodes (HDR tonemap, stabilise) with
+  the Mac's hardware H.264 encoder, `h264_videotoolbox`, and decodes on the
+  media engine (`-hwaccel videotoolbox`); Homebrew's ffmpeg has both. It checks
+  the local ffmpeg first (a two-frame test encode) and uses `libx264` when the
+  encoder is missing or fails that test. The profile's
+  `prepare.encoder` (`profile-schema.md`) forces either; the choice is
+  recorded under `extra.prepare.encoder` and `extra.prepare.hwaccel`.
 - Claude Code with the Buffer MCP connected (statics) and, after the wizard, the
   OpusClip MCP (interactive sessions).
 - An OpusClip plan with API access (Pro or Enterprise). The key goes into
@@ -121,6 +128,14 @@ watch `longform status` move from `staged` to `clipped`. For an album profile,
 album, and `watch.err.log` shows `watch: photos <p>: ...` when launchd's own run
 cannot read it. The brief lands in `review/brief.md`, in Slack if
 configured, and as a macOS notification.
+
+The LaunchAgent runs at standard priority (`ProcessType` `Standard`, `Nice` 0, no
+`LowPriorityIO`). An agent marked `Background` is confined, with every ffmpeg and
+whisper-cli it starts, to the efficiency cores at throttled IO: one 24-minute 4K
+HDR recording's tonemap ran at about 1.4 s of video per minute, roughly 18 hours.
+An agent installed by an older wizard still has those keys; re-render it with
+`make launchd-install`. The loaded values are the `nice` and `spawn type` lines
+of `launchctl print gui/$(id -u)/com.$(id -un).longform-watch`.
 
 ## Make targets
 

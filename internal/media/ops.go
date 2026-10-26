@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"regexp"
+	"runtime"
 	"strconv"
 )
 
@@ -18,19 +19,98 @@ func (t Tools) Remux(dir, in, out string) error {
 	return err
 }
 
-// Tonemap re-encodes HDR video to BT.709 SDR with the given -vf chain. ffmpeg's
-// autorotate (default on) applies the display matrix during decode, so the
-// output is upright without a rotation tag.
-func (t Tools) Tonemap(dir, in, out, vf string) error {
+// Encoder and hwaccel names as ffmpeg spells them; prepare records them in
+// job.extra.prepare.
+const (
+	EncoderX264         = "libx264"
+	EncoderVideoToolbox = "h264_videotoolbox"
+	HWAccelVideoToolbox = "videotoolbox"
+	HWAccelNone         = "none"
+)
+
+// VideoToolboxQuality is h264_videotoolbox's constant-quality setting
+// (-q:v, 1..100). On a 10 s slice of a 4K HLG iPhone recording, 65 with
+// hardware decode tonemapped about 2.7x faster than libx264 CRF 18 medium,
+// wrote under a third of the bytes, and scored SSIM 0.99 (luma) against it.
+const VideoToolboxQuality = "65"
+
+// VideoEncode is how a re-encoding op decodes and encodes video. The zero
+// value is software decode plus libx264 CRF 18 medium.
+type VideoEncode struct {
+	Encoder       string // EncoderX264 (or "") | EncoderVideoToolbox
+	HWAccel       string // "" or HWAccelNone = software decode | HWAccelVideoToolbox
+	FilterThreads int    // -filter_threads; <= 0 = runtime.NumCPU()
+}
+
+// EncoderName is the ffmpeg encoder this setting runs.
+func (e VideoEncode) EncoderName() string {
+	if e.Encoder == "" {
+		return EncoderX264
+	}
+	return e.Encoder
+}
+
+// HWAccelName is the decode hwaccel this setting runs, HWAccelNone for
+// software decode.
+func (e VideoEncode) HWAccelName() string {
+	if e.HWAccel == "" {
+		return HWAccelNone
+	}
+	return e.HWAccel
+}
+
+// InputArgs go before -i. -filter_threads sizes the filtergraph's thread
+// pool. -hwaccel decodes on Apple's media engine; without
+// -hwaccel_output_format the frames are copied back to system memory for the
+// software filters (tonemap, deshake), and a stream the engine cannot decode
+// falls back to software decode.
+func (e VideoEncode) InputArgs() []string {
+	n := e.FilterThreads
+	if n <= 0 {
+		n = runtime.NumCPU()
+	}
+	args := []string{"-filter_threads", strconv.Itoa(n)}
+	if h := e.HWAccelName(); h != HWAccelNone {
+		args = append(args, "-hwaccel", h)
+	}
+	return args
+}
+
+// CodecArgs select and configure the video encoder (output options).
+func (e VideoEncode) CodecArgs() []string {
+	if e.EncoderName() == EncoderVideoToolbox {
+		return []string{"-c:v", EncoderVideoToolbox, "-q:v", VideoToolboxQuality, "-threads", "0"}
+	}
+	return []string{"-c:v", EncoderX264, "-crf", "18", "-preset", "medium", "-threads", "0"}
+}
+
+// encodeArgs assembles one decode-filter-encode run: video 0 and any audio
+// mapped, vf applied, video encoded per enc, then the trailing output args.
+func encodeArgs(in, out, vf string, enc VideoEncode, tailArgs ...string) []string {
+	args := []string{"-hide_banner", "-loglevel", "error", "-y"}
+	args = append(args, enc.InputArgs()...)
+	args = append(args, "-i", in, "-map", "0:v:0", "-map", "0:a?", "-vf", vf)
+	args = append(args, enc.CodecArgs()...)
+	args = append(args, tailArgs...)
+	return append(args, out)
+}
+
+// TonemapArgs is the ffmpeg command line Tonemap runs (exported for tests).
+func TonemapArgs(in, out, vf string, enc VideoEncode) []string {
 	// The output is always tagged BT.709 SDR. With zscale the filter chain
 	// already converts to it; the tonemap-only fallback (an ffmpeg without
 	// zscale) approximates the conversion, and without these tags the file
 	// would still advertise the HDR transfer it no longer carries.
-	_, err := t.run(dir, t.FFmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", in,
-		"-map", "0:v:0", "-map", "0:a?",
-		"-vf", vf, "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+	return encodeArgs(in, out, vf, enc,
 		"-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv",
-		"-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
+		"-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart")
+}
+
+// Tonemap re-encodes HDR video to BT.709 SDR with the given -vf chain. ffmpeg's
+// autorotate (default on) applies the display matrix during decode, so the
+// output is upright without a rotation tag.
+func (t Tools) Tonemap(dir, in, out, vf string, enc VideoEncode) error {
+	_, err := t.run(dir, t.FFmpeg, TonemapArgs(in, out, vf, enc)...)
 	return err
 }
 
@@ -41,12 +121,15 @@ func (t Tools) StabilizeDetect(dir, in, vf string) error {
 	return err
 }
 
-// StabilizeTransform is vidstab pass 2; audio is copied untouched.
-func (t Tools) StabilizeTransform(dir, in, out, vf string) error {
-	_, err := t.run(dir, t.FFmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", in,
-		"-map", "0:v:0", "-map", "0:a?",
-		"-vf", vf, "-c:v", "libx264", "-crf", "18", "-preset", "medium",
-		"-c:a", "copy", "-movflags", "+faststart", out)
+// StabilizeTransformArgs is the ffmpeg command line StabilizeTransform runs.
+func StabilizeTransformArgs(in, out, vf string, enc VideoEncode) []string {
+	return encodeArgs(in, out, vf, enc, "-c:a", "copy", "-movflags", "+faststart")
+}
+
+// StabilizeTransform is vidstab pass 2 (or the single deshake pass); audio is
+// copied untouched.
+func (t Tools) StabilizeTransform(dir, in, out, vf string, enc VideoEncode) error {
+	_, err := t.run(dir, t.FFmpeg, StabilizeTransformArgs(in, out, vf, enc)...)
 	return err
 }
 

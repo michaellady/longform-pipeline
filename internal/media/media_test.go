@@ -147,3 +147,122 @@ func TestParseFilterList(t *testing.T) {
 		t.Error("substring must not match")
 	}
 }
+
+func TestParseEncoderAndHWAccelLists(t *testing.T) {
+	enc := []byte("Encoders:\n V..... = Video\n ------\n V....D libx264              libx264 H.264 / AVC\n V....D h264_videotoolbox    VideoToolbox H.264 Encoder (codec h264)\n")
+	if !ParseEncoderList(enc, EncoderVideoToolbox) || !ParseEncoderList(enc, EncoderX264) {
+		t.Error("listed encoders not found")
+	}
+	if ParseEncoderList(enc, "hevc_videotoolbox") || ParseEncoderList(enc, "h264") {
+		t.Error("unlisted encoder or substring matched")
+	}
+	hw := []byte("Hardware acceleration methods:\nvideotoolbox\n\n")
+	if !ParseHWAccelList(hw, HWAccelVideoToolbox) {
+		t.Error("videotoolbox hwaccel not found")
+	}
+	if ParseHWAccelList([]byte("Hardware acceleration methods:\n\n"), HWAccelVideoToolbox) || ParseHWAccelList(hw, "video") {
+		t.Error("absent or partial hwaccel matched")
+	}
+}
+
+func TestResolveEncoder(t *testing.T) {
+	full := HWCaps{HWAccel: true, Encoder: true}
+	cases := []struct {
+		name, setting, goos string
+		caps                HWCaps
+		probeErr            bool
+		wantEnc, wantHW     string
+		wantErr, wantProbe  bool
+	}{
+		{"auto darwin full", "auto", "darwin", full, false, EncoderVideoToolbox, HWAccelVideoToolbox, false, true},
+		{"empty means auto", "", "darwin", full, false, EncoderVideoToolbox, HWAccelVideoToolbox, false, true},
+		{"auto encoder without hwaccel", "auto", "darwin", HWCaps{Encoder: true}, false, EncoderVideoToolbox, HWAccelNone, false, true},
+		{"auto encoder unusable", "auto", "darwin", HWCaps{HWAccel: true}, false, EncoderX264, HWAccelNone, false, true},
+		{"auto off darwin never probes", "auto", "linux", full, false, EncoderX264, HWAccelNone, false, false},
+		{"x264 never probes", "x264", "darwin", full, false, EncoderX264, HWAccelNone, false, false},
+		{"explicit videotoolbox", "videotoolbox", "darwin", full, false, EncoderVideoToolbox, HWAccelVideoToolbox, false, true},
+		{"explicit videotoolbox unusable", "videotoolbox", "darwin", HWCaps{HWAccel: true}, false, "", "", true, true},
+		{"explicit videotoolbox off darwin", "videotoolbox", "linux", HWCaps{}, false, "", "", true, true},
+		{"probe error", "auto", "darwin", full, true, "", "", true, true},
+		{"bad setting", "nvenc", "darwin", full, false, "", "", true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			probed := false
+			probe := func() (HWCaps, error) {
+				probed = true
+				if c.probeErr {
+					return HWCaps{}, ErrToolFailed
+				}
+				return c.caps, nil
+			}
+			enc, err := ResolveEncoder(c.setting, c.goos, probe)
+			if probed != c.wantProbe {
+				t.Errorf("probed = %v, want %v", probed, c.wantProbe)
+			}
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("want error, got %+v", enc)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if enc.EncoderName() != c.wantEnc || enc.HWAccelName() != c.wantHW {
+				t.Errorf("got %s/%s, want %s/%s", enc.EncoderName(), enc.HWAccelName(), c.wantEnc, c.wantHW)
+			}
+		})
+	}
+}
+
+// indexOf returns the position of the first arg equal to s, or -1.
+func indexOf(args []string, s string) int {
+	for i, a := range args {
+		if a == s {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestVideoEncodeArgs(t *testing.T) {
+	var zero VideoEncode
+	if zero.EncoderName() != EncoderX264 || zero.HWAccelName() != HWAccelNone {
+		t.Errorf("zero value must be libx264 + software decode: %s %s", zero.EncoderName(), zero.HWAccelName())
+	}
+	x264 := TonemapArgs("in.mov", "out.mp4", "VF", VideoEncode{Encoder: EncoderX264, HWAccel: HWAccelNone, FilterThreads: 12})
+	got := strings.Join(x264, " ")
+	want := "-hide_banner -loglevel error -y -filter_threads 12 -i in.mov -map 0:v:0 -map 0:a? -vf VF " +
+		"-c:v libx264 -crf 18 -preset medium -threads 0 " +
+		"-color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv -c:a aac -b:a 192k -movflags +faststart out.mp4"
+	if got != want {
+		t.Errorf("x264 tonemap:\n got %s\nwant %s", got, want)
+	}
+
+	vt := TonemapArgs("in.mov", "out.mp4", "VF", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox, FilterThreads: 14})
+	got = strings.Join(vt, " ")
+	want = "-hide_banner -loglevel error -y -filter_threads 14 -hwaccel videotoolbox -i in.mov -map 0:v:0 -map 0:a? -vf VF " +
+		"-c:v h264_videotoolbox -q:v 65 -threads 0 " +
+		"-color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv -c:a aac -b:a 192k -movflags +faststart out.mp4"
+	if got != want {
+		t.Errorf("videotoolbox tonemap:\n got %s\nwant %s", got, want)
+	}
+
+	st := StabilizeTransformArgs("a.mp4", "b.mp4", "deshake", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox})
+	if i, j := indexOf(st, "-hwaccel"), indexOf(st, "-i"); i < 0 || i > j || st[i+1] != HWAccelVideoToolbox {
+		t.Errorf("-hwaccel videotoolbox must precede -i: %v", st)
+	}
+	if i := indexOf(st, "-filter_threads"); i < 0 || st[i+1] == "0" || st[i+1] == "" {
+		t.Errorf("-filter_threads must default to the CPU count: %v", st)
+	}
+	if i := indexOf(st, "-c:v"); i < 0 || st[i+1] != EncoderVideoToolbox || indexOf(st, "-crf") >= 0 {
+		t.Errorf("stabilize must encode with videotoolbox and no CRF: %v", st)
+	}
+	if i := indexOf(st, "-c:a"); i < 0 || st[i+1] != "copy" || st[len(st)-1] != "b.mp4" {
+		t.Errorf("stabilize copies audio and writes the output last: %v", st)
+	}
+	if sx := StabilizeTransformArgs("a.mp4", "b.mp4", "deshake", VideoEncode{}); indexOf(sx, "-hwaccel") >= 0 || indexOf(sx, "libx264") < 0 {
+		t.Errorf("x264 stabilize must decode in software: %v", sx)
+	}
+}
