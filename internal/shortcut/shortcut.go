@@ -5,8 +5,14 @@
 //     profile's iCloud Drive inbox with Save File. Works for any file, but a
 //     long 4K recording is copied byte for byte through Shortcuts.
 //   - mark ("Mark for <Brand>"): adds the shared Photos item to the profile's
-//     Photos album (profile.photos.album). Nothing is copied; iCloud Photos
-//     syncs the original and the Mac's Photos feed picks it up.
+//     Photos album (profile.photos.album). The library gets no copy; iCloud
+//     Photos syncs the original and the Mac's Photos feed picks it up. Run
+//     from the Share sheet, though, it still makes Photos export the whole
+//     video first: the Shortcuts share extension loads the file of every
+//     Photos item before the shortcut runs, whatever its input classes
+//     (ContentKit -[WFNSExtensionItemContentItem
+//     preloadImportantItemsWithCompletionHandler:]), so Photos' own
+//     Share > Add to Album is the zero-copy route.
 //
 // The file is a plist in the Shortcuts "workflow" format; `shortcuts sign`
 // (macOS 12+) turns it into an importable, signed .shortcut, and opening that

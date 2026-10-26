@@ -1,22 +1,33 @@
 # iOS Shortcuts: get a recording from the phone to the Mac
 
-Each profile has two Share-sheet shortcuts. Both appear when you share a video from
-Photos; the Mac's launchd watcher does everything after that.
+There are three ways to hand a recording to the Mac. All of them start from **Share**
+on a video in Photos; the Mac's launchd watcher does everything after that.
 
-| Shortcut | What the phone does | Use it for |
+| Route | What the phone does | Use it for |
 |---|---|---|
-| **Mark for <Brand>** | Adds the video to the profile's Photos album (`photos.album`). Nothing is copied: iCloud Photos uploads the original as it always does, and the Mac's Photos feed picks it up once it has synced. | Everything recorded with the Camera app or saved to Photos. This is the default when the profile has `photos.enabled`. |
-| **Send to <profile> inbox** | Copies the file into `iCloud Drive/Shortcuts/longform-inbox/<profile>/` with Save File. A 20-minute 4K video is copied byte for byte through Shortcuts first. | Files that are not in Photos (the Files app, downloads, other apps' exports), or a profile without the Photos feed. |
+| **Share → Add to Album → `<album>`** (Photos' own action, no shortcut) | Adds the video to the profile's Photos album (`photos.album`) at once. Nothing is exported or copied: iCloud Photos uploads the original as it always does, and the Mac's Photos feed picks it up once it has synced. | **The primary route.** Everything recorded with the Camera app or saved to Photos, when the profile has `photos.enabled`. |
+| **Mark for <Brand>** (shortcut) | Same result, in one tap from the Share sheet's shortcut row. But a shortcut run from the Share sheet makes Photos export the whole video first ("Preparing…"), so a long recording waits minutes before the shortcut even starts. | Optional, for short clips, or when one tap matters more than the wait. |
+| **Send to <profile> inbox** (shortcut) | Copies the file into `iCloud Drive/Shortcuts/longform-inbox/<profile>/` with Save File. A 20-minute 4K video is exported and then copied byte for byte through Shortcuts. | Files that are not in Photos (the Files app, downloads, other apps' exports), or a profile without the Photos feed. |
 
 Replace `<profile>` below with the profile name (`evc`, `sandbox-bjj`, ...), `<Brand>`
 with its `brand.display`, and `<album>` with its `photos.album` (for example
 `longform-evc`).
 
-## Mark for <Brand> (Photos album)
+### Why "Preparing…" appears with a shortcut
+
+When you pick a shortcut in the Share sheet, iOS hands it the shared items through the
+Shortcuts share extension, and that extension loads the full file of every Photos item
+before the shortcut runs (it keeps the Photos asset ID alongside). For a video, that
+means Photos exports the whole recording first, which is the "Preparing…" spinner.
+The shortcut's accepted input types do not change this: the file is loaded before
+they are applied. Photos' own **Add to Album** works on the library asset directly,
+so it is instant whatever the length.
+
+## Add to Album (primary route, no shortcut)
 
 ### Once: create the album on the phone
 
-The shortcut adds to an album that already exists; it does not create one.
+Add to Album and the Mark shortcut both add to an album that already exists.
 
 1. Open **Photos** on the iPhone → **Albums** → **+** → **New Album**.
 2. Name it exactly as the profile's `photos.album` (same spelling, case and spaces),
@@ -25,6 +36,27 @@ The shortcut adds to an album that already exists; it does not create one.
 With iCloud Photos on, the album syncs to the Mac's Photos library within a minute or
 so, which is where the watcher's Photos feed reads it. Only movies in the album are
 fed; photos added to it are ignored.
+
+### Use it
+
+- **Single take (EVC)**: record in the Camera app, open the video in Photos, tap
+  **Share** → **Add to Album** → `<album>`. It returns at once, whatever the length.
+- **Several files in one segment (BJJ)**: in Photos tap **Select**, pick every file of
+  the class segment, tap **Share** → **Add to Album** → `<album>` once. All of them go
+  into the album; the watcher stages every synced album recording of a pass together,
+  so `stitch` groups them by recording time as it does for inbox files.
+
+The Mac sees a recording only after iCloud Photos has uploaded it from the phone and
+downloaded the original to the Mac (Photos → Settings → iCloud → "Download Originals
+to this Mac", or the profile's `photos.download_missing`). Until then the watcher
+logs it as waiting and sends one notification. See `docs/profile-schema.md` →
+`photos`.
+
+## Mark for <Brand> (optional one-tap shortcut)
+
+The same hand-off as Add to Album, as a shortcut in the Share sheet's shortcut row, so
+it is one tap instead of three. It costs the "Preparing…" export described above, so
+prefer Add to Album for long recordings.
 
 ### Steps (hand-built on the iPhone, about one minute)
 
@@ -56,19 +88,10 @@ The first run asks for permission to access Photos. Allow it once.
 
 ### Use it
 
-- **Single take (EVC)**: record in the Camera app, open the video in Photos, tap
-  **Share**, pick **Mark for <Brand>**. It returns at once because nothing is copied.
-- **Several files in one segment (BJJ)**: in Photos tap **Select**, pick every file of
-  the class segment, tap **Share**, pick the Shortcut once. All of them go into the
-  album; the watcher stages every synced album recording of a pass together, so
-  `stitch` groups them by recording time as it does for inbox files.
-- Without the shortcut: **Share** → **Add to Album** → `<album>` does the same thing.
-
-The Mac sees a recording only after iCloud Photos has uploaded it from the phone and
-downloaded the original to the Mac (Photos → Settings → iCloud → "Download Originals
-to this Mac", or the profile's `photos.download_missing`). Until then the watcher
-logs it as waiting and sends one notification. See `docs/profile-schema.md` →
-`photos`.
+Open the video in Photos (or **Select** several), tap **Share**, pick **Mark for
+<Brand>**. Photos shows "Preparing…" while it exports the video for the shortcut; a
+long recording can take minutes. The library gets no copy: the export is a temporary
+file, and the shortcut adds the original asset to the album.
 
 ### Building it on the Mac instead
 
@@ -101,6 +124,7 @@ features not supported on this device"), and *Add Photos To Album* is on none of
 |---|---|---|
 | "The photo album that was selected does not exist", or the shortcut asks which album | the album does not exist on the phone, or its name differs from `photos.album` | create it (Photos → Albums → + → New Album) with the exact name |
 | "Can't Import Shortcut … contains features not supported on this device" on the Mac | the file holds an App Intent the Mac will not import (an old build used *Add Photos To Album*) | rebuild with `longform shortcut --profile <profile> --kind mark`, or hand-build on the phone |
+| "Preparing…" for a long time after picking the shortcut | Photos is exporting the whole video for the Share sheet; every shortcut run from the Share sheet gets the full file | use Photos' **Share → Add to Album → `<album>`** instead; it is instant |
 | Shortcut missing from the Share sheet | Share Sheet Types lack Images/Media | step 3 |
 | Shortcut fails on a file from the Files app | Remove from Photo Album only works on items already in Photos | use **Send to <profile> inbox** for that file |
 | Two copies of a video in the album | the step-5 Remove from Photo Album is missing, and the video was marked twice | add step 5; delete the extra copy in Photos |
