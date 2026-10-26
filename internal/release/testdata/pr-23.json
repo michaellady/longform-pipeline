@@ -1,0 +1,1 @@
+{"body": "## Summary\nThe manifest format changes; old jobs must be re-sealed.", "labels": [{"id": "LA_3", "name": "release:major", "description": "", "color": "b60205"}, {"id": "LA_4", "name": "release:minor", "description": "", "color": "fbca04"}], "number": 23, "title": "manifest v2"}
