@@ -358,19 +358,19 @@ func TestVideoEncodeArgs(t *testing.T) {
 	if zero.EncoderName() != EncoderX264 || zero.HWAccelName() != HWAccelNone {
 		t.Errorf("zero value must be libx264 + software decode: %s %s", zero.EncoderName(), zero.HWAccelName())
 	}
-	x264 := TonemapArgs("in.mov", "out.mp4", "VF", VideoEncode{Encoder: EncoderX264, HWAccel: HWAccelNone, FilterThreads: 12})
+	x264 := TonemapArgs("in.mov", "out.mp4", "VF", VideoEncode{Encoder: EncoderX264, HWAccel: HWAccelNone, FilterThreads: 12, Rate: "30/1"})
 	got := strings.Join(x264, " ")
 	want := "-hide_banner -loglevel error -y -filter_threads 12 -i in.mov -map 0:v:0 -map 0:a? -vf VF " +
-		"-c:v libx264 -crf 18 -preset medium -threads 0 " +
+		"-c:v libx264 -crf 18 -preset medium -threads 0 -fps_mode cfr -r 30/1 " +
 		"-color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv -c:a aac -b:a 192k -movflags +faststart out.mp4"
 	if got != want {
 		t.Errorf("x264 tonemap:\n got %s\nwant %s", got, want)
 	}
 
-	vt := TonemapArgs("in.mov", "out.mp4", "VF", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox, FilterThreads: 14})
+	vt := TonemapArgs("in.mov", "out.mp4", "VF", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox, FilterThreads: 14, Rate: "30000/1001"})
 	got = strings.Join(vt, " ")
 	want = "-hide_banner -loglevel error -y -filter_threads 14 -hwaccel videotoolbox -i in.mov -map 0:v:0 -map 0:a? -vf VF " +
-		"-c:v h264_videotoolbox -q:v 65 -threads 0 " +
+		"-c:v h264_videotoolbox -q:v 65 -threads 0 -fps_mode cfr -r 30000/1001 " +
 		"-color_primaries bt709 -color_trc bt709 -colorspace bt709 -color_range tv -c:a aac -b:a 192k -movflags +faststart out.mp4"
 	if got != want {
 		t.Errorf("videotoolbox tonemap:\n got %s\nwant %s", got, want)
@@ -378,10 +378,10 @@ func TestVideoEncodeArgs(t *testing.T) {
 
 	// The scale_vt pass keeps frames on the hardware and leaves -colorspace
 	// out (ffmpeg would insert a software scaler the frames cannot enter).
-	hw := TonemapArgs("in.mov", "out.mp4", "VF", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox, HWFrames: true, FilterThreads: 14})
+	hw := TonemapArgs("in.mov", "out.mp4", "VF", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox, HWFrames: true, FilterThreads: 14, Rate: "30/1"})
 	got = strings.Join(hw, " ")
 	want = "-hide_banner -loglevel error -y -filter_threads 14 -hwaccel videotoolbox -hwaccel_output_format videotoolbox_vld -i in.mov -map 0:v:0 -map 0:a? -vf VF " +
-		"-c:v h264_videotoolbox -q:v 65 -threads 0 " +
+		"-c:v h264_videotoolbox -q:v 65 -threads 0 -fps_mode cfr -r 30/1 " +
 		"-color_primaries bt709 -color_trc bt709 -color_range tv -c:a aac -b:a 192k -movflags +faststart out.mp4"
 	if got != want {
 		t.Errorf("hardware-frames tonemap:\n got %s\nwant %s", got, want)
@@ -391,7 +391,7 @@ func TestVideoEncodeArgs(t *testing.T) {
 		t.Errorf("software decode must not ask for hardware frames: %v", sw)
 	}
 
-	st := StabilizeTransformArgs("a.mp4", "b.mp4", "deshake", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox})
+	st := StabilizeTransformArgs("a.mp4", "b.mp4", "deshake", VideoEncode{Encoder: EncoderVideoToolbox, HWAccel: HWAccelVideoToolbox, Rate: "30/1"})
 	if i, j := indexOf(st, "-hwaccel"), indexOf(st, "-i"); i < 0 || i > j || st[i+1] != HWAccelVideoToolbox {
 		t.Errorf("-hwaccel videotoolbox must precede -i: %v", st)
 	}
@@ -407,7 +407,18 @@ func TestVideoEncodeArgs(t *testing.T) {
 	if indexOf(st, "-hwaccel_output_format") >= 0 {
 		t.Errorf("stabilize runs software filters and needs software frames: %v", st)
 	}
-	if sx := StabilizeTransformArgs("a.mp4", "b.mp4", "deshake", VideoEncode{}); indexOf(sx, "-hwaccel") >= 0 || indexOf(sx, "libx264") < 0 {
+	if i := indexOf(st, "-fps_mode"); i < 0 || st[i+1] != "cfr" || st[i+2] != "-r" || st[i+3] != "30/1" || i > indexOf(st, "b.mp4") {
+		t.Errorf("stabilize must encode at a constant 30/1: %v", st)
+	}
+	sx := StabilizeTransformArgs("a.mp4", "b.mp4", "deshake", VideoEncode{Rate: "25/1"})
+	if indexOf(sx, "-hwaccel") >= 0 || indexOf(sx, "libx264") < 0 {
 		t.Errorf("x264 stabilize must decode in software: %v", sx)
+	}
+	if i := indexOf(sx, "-fps_mode"); i < 0 || sx[i+1] != "cfr" || sx[i+3] != "25/1" {
+		t.Errorf("x264 stabilize must encode at a constant 25/1: %v", sx)
+	}
+	// Without a known rate the encode is still constant frame rate.
+	if na := (VideoEncode{}).RateArgs(); strings.Join(na, " ") != "-fps_mode cfr" {
+		t.Errorf("rate-less RateArgs = %v", na)
 	}
 }
