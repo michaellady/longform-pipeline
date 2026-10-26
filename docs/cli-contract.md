@@ -608,7 +608,10 @@ Run by the watcher after `manifest expire` for every `monitored` job.
 ## What the other job-stage commands must honour
 
 - `prepare <dir>`: input is `ingest.InputPath(job)`; advance `staged -> prepared`;
-  re-running on a `prepared` or later job is a no-op exit `0`.
+  re-running on a `prepared` or later job is a no-op exit `0`. An HDR input
+  that this ffmpeg cannot convert correctly (neither VideoToolbox `scale_vt`
+  nor `zscale`) exits `70` before anything is encoded, with
+  `extra.prepare.tonemap_filter` `unavailable` and the job left `staged`.
 - `upload <dir>`: advance `prepared -> uploaded`; record both project ids
   before anything else so a re-run never re-submits.
 - `wait <dir>`: advance `uploaded -> clipped` when both renders are done;

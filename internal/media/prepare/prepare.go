@@ -51,16 +51,18 @@ type Options struct {
 type State struct {
 	Steps             map[string]Stamp `json:"steps"`
 	HDR               bool             `json:"hdr"`
-	TonemapFilter     string           `json:"tonemap_filter,omitempty"` // "zscale" | "tonemap-only"
+	TonemapFilter     string           `json:"tonemap_filter,omitempty"` // "scale_vt" | "zscale" | "unavailable" (media.Tonemap*)
 	Stabilized        bool             `json:"stabilized"`
 	StabilizeMethod   string           `json:"stabilize_method,omitempty"` // "vidstab" | "deshake ..." | "skipped: ..."
 	TranscribeSkipped bool             `json:"transcribe_skipped,omitempty"`
 	WhisperModel      string           `json:"whisper_model,omitempty"`
 	CensorList        string           `json:"censor_list,omitempty"`
 	CensorSpans       int              `json:"censor_spans"`
-	// Encoder and HWAccel record how this run re-encoded video (tonemap,
-	// stabilise): "h264_videotoolbox" | "libx264", and "videotoolbox" |
-	// "none". Empty when nothing was re-encoded.
+	// Encoder and HWAccel record the profile's prepare.encoder as resolved
+	// on this machine, which the stabilise pass and a zscale tonemap use:
+	// "h264_videotoolbox" | "libx264", and "videotoolbox" | "none". Empty
+	// when nothing was re-encoded. A scale_vt tonemap always decodes and
+	// encodes on VideoToolbox, whatever these say.
 	Encoder string `json:"encoder,omitempty"`
 	HWAccel string `json:"hwaccel,omitempty"`
 }
@@ -85,6 +87,7 @@ type runner struct {
 	state *State
 	log   io.Writer
 	enc   *media.VideoEncode // resolved on first re-encode
+	hw    *media.HWCaps      // probed at most once per run
 }
 
 // Run executes the stage. It is idempotent: a job already at or past
@@ -170,37 +173,53 @@ func (r *runner) run() error {
 	r.state.HDR = info.HDR()
 	r.state.Encoder, r.state.HWAccel = "", ""
 
-	// 2. Remux, or tonemap when HDR.
+	// 2. Remux, or tonemap when HDR. The conversion is chosen afresh every
+	// run (never reused from an earlier run's state), and an HDR source with
+	// no correct conversion stops the stage here, before anything is encoded:
+	// tonemap_filter "unavailable" is saved with the error.
 	remuxSig := "copy"
 	var enc media.VideoEncode
+	var tm media.TonemapPlan
+	r.state.TonemapFilter = ""
 	if info.HDR() {
 		var err error
 		if enc, err = r.encoder(); err != nil {
 			return err
 		}
-		if r.state.TonemapFilter == "" {
-			has, err := r.opts.Tools.HasFilter("zscale")
-			if err != nil {
-				return err
+		hasZscale := func() (bool, error) { return r.opts.Tools.HasFilter("zscale") }
+		tm, err = media.ChooseTonemap(runtime.GOOS, enc, info.Rotation, r.caps, hasZscale)
+		r.state.TonemapFilter = tm.Filter
+		if err != nil {
+			if errors.Is(err, media.ErrNoHDRConversion) {
+				fmt.Fprintf(r.opts.Log, "%-11s %s\n", "tonemap", media.TonemapUnavailable)
+				return fmt.Errorf("%s is HDR (%s), and %w", filepath.Base(src), info.ColorTransfer, err)
 			}
-			r.state.TonemapFilter = "tonemap-only"
-			if has {
-				r.state.TonemapFilter = "zscale"
+			return err
+		}
+		remuxSig = "tonemap:" + tm.Filter + encoderSig(tm.Encode)
+		how := "software, " + tm.Encode.EncoderName()
+		if tm.Filter == media.TonemapScaleVT {
+			how = "VideoToolbox decode and encode"
+			if dir, _ := media.VTTranspose(info.Rotation); dir != "" {
+				how += ", transpose " + dir
 			}
 		}
-		remuxSig = "tonemap:" + r.state.TonemapFilter + encoderSig(enc)
+		fmt.Fprintf(r.opts.Log, "%-11s %s (%s)\n", "tonemap", tm.Filter, how)
 	}
 	err := r.step("remux", src, RemuxOut, remuxSig, func() error {
-		if info.HDR() {
+		if !info.HDR() {
+			return r.opts.Tools.Remux(job.Dir(), src, RemuxOut)
+		}
+		vf := media.ScaleVTTonemapFilter(info.Rotation)
+		if tm.Filter == media.TonemapZscale {
 			// A reused staged probe lacks primaries/matrix; probe now for them.
 			full, perr := r.opts.Tools.Probe(src)
 			if perr != nil {
 				return perr
 			}
-			vf := media.TonemapFilter(r.state.TonemapFilter == "zscale", full.ColorTransfer, full.ColorPrimaries, full.ColorSpace)
-			return r.opts.Tools.Tonemap(job.Dir(), src, RemuxOut, vf, enc)
+			vf = media.ZscaleTonemapFilter(full.ColorTransfer, full.ColorPrimaries, full.ColorSpace)
 		}
-		return r.opts.Tools.Remux(job.Dir(), src, RemuxOut)
+		return r.opts.Tools.Tonemap(job.Dir(), src, RemuxOut, vf, tm.Encode)
 	})
 	if err != nil {
 		return err
@@ -398,6 +417,9 @@ func (r *runner) run() error {
 		return err
 	}
 	note := fmt.Sprintf("hdr=%v stabilized=%v words=%d censored_spans=%d mode=%s", r.state.HDR, r.state.Stabilized, len(tr.Words), len(cen.Spans), mode)
+	if r.state.TonemapFilter != "" {
+		note += " tonemap=" + r.state.TonemapFilter
+	}
 	if r.state.Encoder != "" {
 		note += fmt.Sprintf(" encoder=%s hwaccel=%s", r.state.Encoder, r.state.HWAccel)
 	}
@@ -412,7 +434,7 @@ func (r *runner) encoder() (media.VideoEncode, error) {
 	if r.enc != nil {
 		return *r.enc, nil
 	}
-	enc, err := media.ResolveEncoder(r.prof.Prepare.Encoder, runtime.GOOS, r.opts.Tools.VideoToolboxCaps)
+	enc, err := media.ResolveEncoder(r.prof.Prepare.Encoder, runtime.GOOS, r.caps)
 	if err != nil {
 		return enc, fmt.Errorf("prepare: %w", err)
 	}
@@ -420,6 +442,19 @@ func (r *runner) encoder() (media.VideoEncode, error) {
 	r.state.Encoder, r.state.HWAccel = enc.EncoderName(), enc.HWAccelName()
 	fmt.Fprintf(r.opts.Log, "%-11s %s, decode hwaccel %s\n", "encoder", r.state.Encoder, r.state.HWAccel)
 	return enc, nil
+}
+
+// caps probes the local ffmpeg's VideoToolbox support once per run; the
+// encoder choice and the tonemap choice share the answer.
+func (r *runner) caps() (media.HWCaps, error) {
+	if r.hw == nil {
+		c, err := r.opts.Tools.VideoToolboxCaps()
+		if err != nil {
+			return c, err
+		}
+		r.hw = &c
+	}
+	return *r.hw, nil
 }
 
 // encoderSig is the step-signature suffix for a re-encode. libx264 adds
