@@ -238,6 +238,10 @@ where `CLAUDE_CONFIG_DIR` is unset; `make launchd-install` re-renders the agent.
 
 ### The executable launchd runs
 
+The editorial session runs on Opus by default (`claude --model opus`); to change
+it, add `LONGFORM_CLAUDE_MODEL` (an alias such as `sonnet` or a full model id) to
+the LaunchAgent's `EnvironmentVariables`, or pass `longform launch-session --model`.
+
 LaunchAgents load no shell aliases and only the PATH written in the plist, so the
 wizard records the `claude` executable it found (`command -v claude`, else
 `~/.local/bin/claude`) as `LONGFORM_CLAUDE` in the agent, next to

@@ -21,6 +21,9 @@ var fixtureDir string
 // set the test binary records the call and advances the job like the real
 // stage command would, so Driver's exec order is observable in pure Go.
 func TestMain(m *testing.M) {
+	if f := os.Getenv(claudeArgvEnv); f != "" {
+		os.Exit(claudeStubMain(f, os.Args[1:]))
+	}
 	if os.Getenv("LONGFORM_TEST_HELPER") == "1" {
 		os.Exit(helperMain(os.Args[1:]))
 	}
@@ -32,6 +35,25 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+// claudeArgvEnv makes the test binary a stub claude: it writes its argv as
+// JSON to the named file (atomically, so a poller never sees half of it).
+const claudeArgvEnv = "LONGFORM_TEST_CLAUDE_ARGV"
+
+func claudeStubMain(path string, args []string) int {
+	b, err := json.Marshal(args)
+	if err != nil {
+		return 70
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return 70
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return 70
+	}
+	return 0
 }
 
 func helperMain(args []string) int {
