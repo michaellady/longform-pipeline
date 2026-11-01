@@ -65,6 +65,12 @@ type State struct {
 	// encodes on VideoToolbox, whatever these say.
 	Encoder string `json:"encoder,omitempty"`
 	HWAccel string `json:"hwaccel,omitempty"`
+	// FrameRate is the source's rate (ffprobe's r_frame_rate) that every
+	// encode is pinned to at a constant frame rate.
+	FrameRate string `json:"frame_rate,omitempty"`
+	// TimingCheck is the last packet-timing check: the delivery's when
+	// prepare finished, else the file that failed it.
+	TimingCheck *media.TimingReport `json:"timing_check,omitempty"`
 }
 
 // Stamp records what a step consumed and produced.
@@ -172,6 +178,13 @@ func (r *runner) run() error {
 	}
 	r.state.HDR = info.HDR()
 	r.state.Encoder, r.state.HWAccel = "", ""
+	r.state.TimingCheck = nil
+	rate, err := r.sourceRate(src, info)
+	if err != nil {
+		return err
+	}
+	r.state.FrameRate = rate
+	frameSec, _ := media.FrameDuration(rate)
 
 	// 2. Remux, or tonemap when HDR. The conversion is chosen afresh every
 	// run (never reused from an earlier run's state), and an HDR source with
@@ -196,7 +209,8 @@ func (r *runner) run() error {
 			}
 			return err
 		}
-		remuxSig = "tonemap:" + tm.Filter + encoderSig(tm.Encode)
+		tm.Encode.Rate = rate
+		remuxSig = "tonemap:" + tm.Filter + encoderSig(tm.Encode) + cfrSig(rate)
 		how := "software, " + tm.Encode.EncoderName()
 		if tm.Filter == media.TonemapScaleVT {
 			how = "VideoToolbox decode and encode"
@@ -206,7 +220,7 @@ func (r *runner) run() error {
 		}
 		fmt.Fprintf(r.opts.Log, "%-11s %s (%s)\n", "tonemap", tm.Filter, how)
 	}
-	err := r.step("remux", src, RemuxOut, remuxSig, func() error {
+	err = r.step("remux", src, RemuxOut, remuxSig, func() error {
 		if !info.HDR() {
 			return r.opts.Tools.Remux(job.Dir(), src, RemuxOut)
 		}
@@ -219,7 +233,10 @@ func (r *runner) run() error {
 			}
 			vf = media.ZscaleTonemapFilter(full.ColorTransfer, full.ColorPrimaries, full.ColorSpace)
 		}
-		return r.opts.Tools.Tonemap(job.Dir(), src, RemuxOut, vf, tm.Encode)
+		if err := r.opts.Tools.Tonemap(job.Dir(), src, RemuxOut, vf, tm.Encode); err != nil {
+			return err
+		}
+		return r.checkTiming(RemuxOut, frameSec, true)
 	})
 	if err != nil {
 		return err
@@ -243,15 +260,19 @@ func (r *runner) run() error {
 			if enc, err = r.encoder(); err != nil {
 				return err
 			}
+			enc.Rate = rate
 		}
 		switch {
 		case hasVidstab:
-			sig := fmt.Sprintf("vidstab:%d:%d:%d", s.Shakiness, s.Smoothing, s.Zoom) + encoderSig(enc)
+			sig := fmt.Sprintf("vidstab:%d:%d:%d", s.Shakiness, s.Smoothing, s.Zoom) + encoderSig(enc) + cfrSig(rate)
 			err := r.step("stabilize", job.Path(RemuxOut), StabilizedOut, sig, func() error {
 				if err := r.opts.Tools.StabilizeDetect(job.Dir(), RemuxOut, media.StabilizeDetectFilter(s.Shakiness, TransformsOut)); err != nil {
 					return err
 				}
 				if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, media.StabilizeTransformFilter(s.Smoothing, s.Zoom, TransformsOut), enc); err != nil {
+					return err
+				}
+				if err := r.checkTiming(StabilizedOut, frameSec, true); err != nil {
 					return err
 				}
 				at := info.DurationMs / 4
@@ -269,9 +290,12 @@ func (r *runner) run() error {
 			job.Artifacts.StabilizeAfter = StabilizeAfter
 			r.state.StabilizeMethod = "vidstab"
 		case hasDeshake:
-			sig := "deshake" + encoderSig(enc)
+			sig := "deshake" + encoderSig(enc) + cfrSig(rate)
 			err := r.step("stabilize", job.Path(RemuxOut), StabilizedOut, sig, func() error {
 				if err := r.opts.Tools.StabilizeTransform(job.Dir(), RemuxOut, StabilizedOut, "deshake", enc); err != nil {
+					return err
+				}
+				if err := r.checkTiming(StabilizedOut, frameSec, true); err != nil {
 					return err
 				}
 				at := info.DurationMs / 4
@@ -407,6 +431,15 @@ func (r *runner) run() error {
 	if err != nil {
 		return err
 	}
+	// The delivery is what OpusClip renders, checked on every run (skipped
+	// step or not). Its video is prepare's own encode when the source was
+	// HDR or stabilised, and must then be constant frame rate; otherwise it
+	// is the source's video stream-copied, whose timing prepare did not make
+	// (a screen recording is variable rate by design), so an irregularity is
+	// recorded and warned about but does not stop the job.
+	if err := r.checkTiming(DeliveryOut, frameSec, info.HDR() || r.state.Stabilized); err != nil {
+		return err
+	}
 	del, err := r.opts.Tools.Probe(job.Path(DeliveryOut))
 	if err != nil {
 		return err
@@ -444,6 +477,59 @@ func (r *runner) encoder() (media.VideoEncode, error) {
 	return enc, nil
 }
 
+// sourceRate is the source's exact frame rate for -r and the timing check:
+// r_frame_rate from ffprobe. A staged probe keeps only a rounded copy
+// ("29.97" for 30000/1001), so the source is probed again for it. A rate
+// that is missing or not a whole number is warned about: OpusClip does not
+// support fractional rates, and prepare keeps the source's rate either way.
+func (r *runner) sourceRate(src string, info *media.Info) (string, error) {
+	rate := info.Rate()
+	if info.RFrameRate == "" {
+		full, err := r.opts.Tools.Probe(src)
+		if err != nil {
+			return "", err
+		}
+		if fr := full.Rate(); fr != "" {
+			rate = fr
+		}
+	}
+	switch {
+	case rate == "":
+		r.warn("the source has no frame rate in its probe; encodes are constant frame rate at ffmpeg's guess and the timing check uses the median packet duration")
+	case !media.IsWholeRate(rate):
+		r.warn(fmt.Sprintf("source frame rate %s is not a whole number of frames per second; OpusClip does not support fractional frame rates", rate))
+	}
+	return rate, nil
+}
+
+// checkTiming runs the packet-timing check on a job-relative file and records
+// it as extra.prepare.timing_check. An irregular file fails with
+// media.ErrIrregularTiming when enforce is set and is a warning otherwise.
+func (r *runner) checkTiming(rel string, frameSec float64, enforce bool) error {
+	rep, err := r.opts.Tools.CheckTiming(r.job.Path(rel), frameSec)
+	if err != nil {
+		return fmt.Errorf("timing check %s: %w", rel, err)
+	}
+	rep.File, rep.Enforced = rel, enforce
+	r.state.TimingCheck = &rep
+	fmt.Fprintf(r.log, "timing %s: %s\n", rel, rep.Summary())
+	if rep.OK {
+		fmt.Fprintf(r.opts.Log, "%-11s ok   %s (%d packets)\n", "timing", rel, rep.Packets)
+		return nil
+	}
+	if !enforce {
+		r.warn(fmt.Sprintf("%s is the source's video, stream-copied, and its frame timing is irregular (%s); prepare did not encode it and uploads it as recorded", rel, rep.Summary()))
+		return nil
+	}
+	return fmt.Errorf("%s: %w: %s. Nothing is uploaded; OpusClip mis-renders a video that is not constant frame rate", rel, media.ErrIrregularTiming, rep.Summary())
+}
+
+// warn writes a WARN line to the prepare log and the progress output.
+func (r *runner) warn(msg string) {
+	fmt.Fprintf(r.log, "WARN: %s\n", msg)
+	fmt.Fprintf(r.opts.Log, "%-11s WARN %s\n", "prepare", msg)
+}
+
 // caps probes the local ffmpeg's VideoToolbox support once per run; the
 // encoder choice and the tonemap choice share the answer.
 func (r *runner) caps() (media.HWCaps, error) {
@@ -467,6 +553,12 @@ func encoderSig(enc media.VideoEncode) string {
 	}
 	return ":" + enc.EncoderName()
 }
+
+// cfrSig is the step-signature suffix for an encode pinned to a constant
+// rate. It changes every encode's signature from before encodes were
+// constant frame rate, so such an output (which may keep a source's gaps)
+// is encoded again.
+func cfrSig(rate string) string { return ":cfr=" + rate }
 
 // step runs fn unless output exists and the recorded stamp for name matches
 // the current input (size+mtime) and sig. Progress is persisted after each

@@ -16,7 +16,8 @@ type Info struct {
 	DurationMs     int64
 	Width          int
 	Height         int
-	FPS            string
+	FPS            string // avg_frame_rate, else r_frame_rate (persisted as model.Probe.FPS)
+	RFrameRate     string // r_frame_rate exactly as ffprobe gives it ("30/1"); "" on a staged probe
 	VideoCodec     string
 	AudioCodec     string
 	PixFmt         string
@@ -42,6 +43,20 @@ func IsHDRTransfer(transfer string) bool {
 
 // HDR reports whether the video stream needs tonemapping.
 func (i *Info) HDR() bool { return IsHDRTransfer(i.ColorTransfer) }
+
+// Rate is the stream's nominal frame rate as an exact ffprobe rational:
+// r_frame_rate, else FPS, "" when neither is a positive rate. prepare
+// encodes at it and checks packet timing against it. avg_frame_rate is no
+// use for this: an iPhone recording whose timestamps jitter by 1/600 s
+// averages 13010400/433703.
+func (i *Info) Rate() string {
+	for _, r := range []string{i.RFrameRate, i.FPS} {
+		if _, ok := FrameDuration(r); ok {
+			return r
+		}
+	}
+	return ""
+}
 
 // Model converts to the persisted probe shape.
 func (i *Info) Model() *model.Probe {
@@ -141,6 +156,7 @@ func ParseProbe(b []byte) (*Info, error) {
 			if info.FPS == "" || info.FPS == "0/0" {
 				info.FPS = s.RFrameRate
 			}
+			info.RFrameRate = s.RFrameRate
 			for _, sd := range s.SideDataList {
 				if sd.SideDataType == "Display Matrix" {
 					info.Rotation = normaliseRotation(sd.Rotation)

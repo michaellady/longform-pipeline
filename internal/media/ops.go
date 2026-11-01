@@ -45,6 +45,10 @@ type VideoEncode struct {
 	// hardware encoder. Only the scale_vt HDR pass sets it: those frames skip
 	// ffmpeg's autorotate, and software filters cannot read them.
 	HWFrames bool
+	// Rate is the constant output frame rate, the source's exact rate as
+	// ffprobe gives it ("30/1"); "" leaves the rate to ffmpeg. Every encode
+	// is constant frame rate either way (RateArgs).
+	Rate string
 }
 
 // EncoderName is the ffmpeg encoder this setting runs.
@@ -92,13 +96,33 @@ func (e VideoEncode) CodecArgs() []string {
 	return []string{"-c:v", EncoderX264, "-crf", "18", "-preset", "medium", "-threads", "0"}
 }
 
+// RateArgs make the output constant frame rate (output options). By default
+// ffmpeg writes an mp4 at variable rate, rounding each frame's time to the
+// output grid and keeping whatever gaps that leaves: a 24-minute iPhone
+// recording (43368 frames whose 1/600 s timestamp jitter adds up to two frame
+// times) came out of the VideoToolbox passes with two packets held for two
+// frames (avg_frame_rate 2265/76), and OpusClip's full-video render of it
+// broke. -fps_mode cfr repeats a frame where the timeline runs ahead instead
+// (and drops one where frames crowd); -r pins the grid to the source rate.
+// Both work on hardware frames: ffmpeg 9 still hands videotoolbox_vld frames
+// straight to h264_videotoolbox.
+func (e VideoEncode) RateArgs() []string {
+	args := []string{"-fps_mode", "cfr"}
+	if e.Rate != "" {
+		args = append(args, "-r", e.Rate)
+	}
+	return args
+}
+
 // encodeArgs assembles one decode-filter-encode run: video 0 and any audio
-// mapped, vf applied, video encoded per enc, then the trailing output args.
+// mapped, vf applied, video encoded per enc at a constant frame rate, then
+// the trailing output args.
 func encodeArgs(in, out, vf string, enc VideoEncode, tailArgs ...string) []string {
 	args := []string{"-hide_banner", "-loglevel", "error", "-y"}
 	args = append(args, enc.InputArgs()...)
 	args = append(args, "-i", in, "-map", "0:v:0", "-map", "0:a?", "-vf", vf)
 	args = append(args, enc.CodecArgs()...)
+	args = append(args, enc.RateArgs()...)
 	args = append(args, tailArgs...)
 	return append(args, out)
 }

@@ -612,6 +612,16 @@ Run by the watcher after `manifest expire` for every `monitored` job.
   that this ffmpeg cannot convert correctly (neither VideoToolbox `scale_vt`
   nor `zscale`) exits `70` before anything is encoded, with
   `extra.prepare.tonemap_filter` `unavailable` and the job left `staged`.
+  Every encode is constant frame rate at the source's `r_frame_rate`. The
+  packet timing of each encode and of `delivery.mp4` is checked (no packet
+  duration more than 10% off one frame, no gap between consecutive
+  presentation times over 1.5 frames); an encode that fails it exits `70`
+  with `job.error` set and the job left `staged`, so it is never uploaded.
+  The last check is `extra.prepare.timing_check` (`file`, `packets`,
+  `nominal_ms`, `max_deviation_ms`, `max_gap_ms`, `bad_durations`,
+  `bad_gaps`, `at_s`, `ok`, `enforced`). A delivery whose video is the
+  source's own, stream-copied, is checked with `enforced` false: an irregular
+  one is a `WARN`, not a failure.
 - `upload <dir>`: advance `prepared -> uploaded`; record both project ids
   before anything else so a re-run never re-submits.
 - `wait <dir>`: advance `uploaded -> clipped` when both renders are done;
