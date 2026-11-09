@@ -203,6 +203,11 @@ type StaticsConfig struct {
 	TemplatesDir string   `json:"templates_dir"`
 	CarouselDir  string   `json:"carousel_dir,omitempty"` // claude-social-media-skills/carousel-newsletter
 	Formats      []string `json:"formats"`
+	// ReferenceDir (custom-html) is a folder of approved designs: a README.md
+	// with the design principles and one subfolder per approved design (its
+	// HTML generator, rendered PNGs, captions). The skill designs new posts in
+	// that visual language. Optional; when set it must be a directory.
+	ReferenceDir string `json:"reference_dir,omitempty"`
 }
 
 // Values for StaticsConfig.Engine.
@@ -321,6 +326,7 @@ func (p *Profile) applyDefaults() {
 	p.Inbox = ExpandHome(p.Inbox)
 	p.Statics.TemplatesDir = ExpandHome(p.Statics.TemplatesDir)
 	p.Statics.CarouselDir = ExpandHome(p.Statics.CarouselDir)
+	p.Statics.ReferenceDir = ExpandHome(p.Statics.ReferenceDir)
 	p.CTA.CTAScript = ExpandHome(p.CTA.CTAScript)
 	p.Copy.VoiceCorpus = ExpandHome(p.Copy.VoiceCorpus)
 	p.Transcribe.Model = ExpandHome(p.Transcribe.Model)
@@ -376,6 +382,13 @@ func (p *Profile) Validate() error {
 		}
 	default:
 		errs = append(errs, fmt.Errorf("statics.engine must be templates, newsletter-carousel or custom-html, got %q", p.Statics.Engine))
+	}
+	if p.Statics.ReferenceDir != "" {
+		if fi, err := os.Stat(p.Statics.ReferenceDir); err != nil {
+			errs = append(errs, fmt.Errorf("statics.reference_dir: %w", err))
+		} else if !fi.IsDir() {
+			errs = append(errs, fmt.Errorf("statics.reference_dir %s is not a directory", p.Statics.ReferenceDir))
+		}
 	}
 	switch p.CTA.StaticCTA {
 	case "":

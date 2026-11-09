@@ -395,6 +395,208 @@ photos_access_check() {
   note "recording's full file arrives on its own; until it does the watcher waits and notifies once."
 }
 
+# expand_tilde PATH prints PATH with a leading ~ replaced by $HOME (for
+# checks only; the profile keeps what the person typed, the binary expands ~).
+expand_tilde() { printf '%s' "${1/#\~/$HOME}"; }
+
+# csv_items "a, b,,c" sets the array CSV_ITEMS to the trimmed, non-empty items.
+csv_items() {
+  local raw item
+  CSV_ITEMS=()
+  IFS=',' read -r -a raw <<<"$1"
+  for item in ${raw[@]+"${raw[@]}"}; do
+    item="${item#"${item%%[![:space:]]*}"}"; item="${item%"${item##*[![:space:]]}"}"
+    [[ -n "$item" ]] && CSV_ITEMS+=("$item")
+  done
+  return 0
+}
+
+# EVC brand palette, offered as the custom-html default.
+EVC_PALETTE="navy=#14386B,green=#2D8A3E,yellow=#F2B705,cream=#F5ECD7"
+
+# ask_statics asks how image posts are made (statics.engine and what that
+# engine needs), whether static captions end with the newsletter CTA, and the
+# Buffer format tag per format. Every default is the existing profile's value.
+# Sets STATICS_ENGINE, STATICS_FORMATS, TEMPLATES_DIR, CAROUSEL_DIR,
+# BRAND_TOKENS (JSON), REFERENCE_DIR, STATIC_CTA, CTA_SCRIPT, FORMAT_TAGS (JSON).
+# ~ in path defaults is kept literal on purpose: the binary expands it.
+# shellcheck disable=SC2088
+ask_statics() {
+  local def f tag p ok csv
+  say "Statics: image posts through Buffer. Engines (docs/profile-schema.md):"
+  note "  templates            fill your Claude Design templates (default)"
+  note "  newsletter-carousel  the EVC newsletter carousel system (10 illustrated slides, quote card)"
+  note "  custom-html          the editorial session designs each post's HTML from brand tokens"
+  while :; do
+    ask_default STATICS_ENGINE "Statics engine:" "$(pdefault .statics.engine templates)"
+    case "$STATICS_ENGINE" in templates|newsletter-carousel|custom-html) break ;; esac
+    warn "templates, newsletter-carousel or custom-html"
+  done
+  # Formats default to the existing list only when the engine is unchanged.
+  if [[ "$(pdefault .statics.engine templates)" == "$STATICS_ENGINE" ]]; then
+    csv="$(pdefault '.statics.formats | join(",")' "")"
+  else
+    csv=""
+  fi
+  TEMPLATES_DIR="$(pdefault .statics.templates_dir "$PROFILES_DIR/$PROFILE/templates")"
+  CAROUSEL_DIR="$(pdefault .statics.carousel_dir "")"
+  REFERENCE_DIR="$(pdefault .statics.reference_dir "")"
+  BRAND_TOKENS='{}'
+
+  case "$STATICS_ENGINE" in
+    templates)
+      while :; do
+        ask_default STATICS_FORMATS "Formats, comma-separated (quote, carousel, still, frame_carousel):" "${csv:-quote,carousel,still,frame_carousel}"
+        ok=1
+        csv_items "$STATICS_FORMATS"
+        for f in ${CSV_ITEMS[@]+"${CSV_ITEMS[@]}"}; do
+          case "$f" in quote|carousel|still|frame_carousel) ;; *) warn "$f is not a templates format"; ok=0 ;; esac
+        done
+        (( ${#CSV_ITEMS[@]} )) || ok=0
+        (( ok )) && break
+      done
+      ;;
+    newsletter-carousel)
+      def="$CAROUSEL_DIR"
+      [[ -z "$def" && -d "$HOME/dev/claude-social-media-skills/carousel-newsletter" ]] && def="~/dev/claude-social-media-skills/carousel-newsletter"
+      while :; do
+        ask_default CAROUSEL_DIR "carousel-newsletter folder (claude-social-media-skills/carousel-newsletter):" "$def"
+        p="$(expand_tilde "$CAROUSEL_DIR")"
+        if [[ -n "$CAROUSEL_DIR" && -f "$p/templates/render.sh" && -f "$p/templates/gen_illustration.py" ]]; then
+          printf '  %s✓ found%s templates/render.sh and templates/gen_illustration.py\n' "$GREEN" "$RESET"
+          break
+        fi
+        if [[ -z "$CAROUSEL_DIR" ]]; then warn "required for newsletter-carousel"; continue; fi
+        warn "$p has no templates/render.sh or templates/gen_illustration.py"
+        if confirm "Keep it anyway (fix the folder before the first image post)?"; then
+          SKIPPED+=("statics.carousel_dir $p needs templates/render.sh and templates/gen_illustration.py")
+          break
+        fi
+      done
+      while :; do
+        ask_default STATICS_FORMATS "Formats, comma-separated (carousel, quote):" "${csv:-carousel,quote}"
+        ok=1
+        csv_items "$STATICS_FORMATS"
+        for f in ${CSV_ITEMS[@]+"${CSV_ITEMS[@]}"}; do
+          [[ "$f" == carousel || "$f" == quote ]] || { warn "$f is not a newsletter-carousel format"; ok=0; }
+        done
+        (( ${#CSV_ITEMS[@]} )) || ok=0
+        (( ok )) && break
+      done
+      ;;
+    custom-html)
+      say "Brand tokens the posts are designed from."
+      while :; do
+        ask_default BRAND_PALETTE "Palette, name=colour comma-separated (EVC: $EVC_PALETTE):" \
+          "$(pdefault '.brand.palette | to_entries | map("\(.key)=\(.value)") | join(",")' "$EVC_PALETTE")"
+        ok=1
+        csv_items "$BRAND_PALETTE"
+        for f in ${CSV_ITEMS[@]+"${CSV_ITEMS[@]}"}; do
+          [[ "$f" =~ ^[A-Za-z0-9_-]+[[:space:]]*=[[:space:]]*[^=[:space:]][^=]*$ ]] || { warn "not name=colour: $f"; ok=0; }
+        done
+        (( ${#CSV_ITEMS[@]} )) || { warn "at least one colour"; ok=0; }
+        (( ok )) && break
+      done
+      ask_default BRAND_FONTS "Font stacks, separated by | (first is the display face):" \
+        "$(pdefault '.brand.fonts | join(" | ")' "Inter, 'Helvetica Neue', sans-serif")"
+      ask_default BRAND_LOGO "Logo (wordmark) text:" "$(pdefault .brand.logo_text "$BRAND_DISPLAY")"
+      BRAND_TOKENS=$(jq -cn --arg pal "$BRAND_PALETTE" --arg fonts "$BRAND_FONTS" --arg logo "$BRAND_LOGO" '{
+        palette: ($pal | split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0) | split("=") | {key: (.[0] | gsub("^\\s+|\\s+$";"")), value: (.[1:] | join("=") | gsub("^\\s+|\\s+$";""))}) | from_entries),
+        fonts: ($fonts | split("|") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0)))
+      } + (if $logo == "" then {} else { logo_text: $logo } end)')
+      def="$REFERENCE_DIR"
+      [[ -z "$def" && -d "$PROFILES_DIR/$PROFILE/designs" ]] && def="$PROFILES_DIR/$PROFILE/designs"
+      note "Reference designs: a folder with README.md (design principles) and one subfolder per approved design."
+      [[ -n "$def" ]] && note "type - for none"
+      while :; do
+        ask_default REFERENCE_DIR "Reference designs folder (blank = none):" "$def"
+        [[ "$REFERENCE_DIR" == "-" ]] && REFERENCE_DIR=""
+        [[ -z "$REFERENCE_DIR" ]] && break
+        p="$(expand_tilde "$REFERENCE_DIR")"
+        if [[ -d "$p" ]]; then
+          [[ -f "$p/README.md" ]] || warn "no README.md in $p; the skill reads the design principles from it"
+          break
+        fi
+        warn "not a folder: $p (the profile would not load)"
+      done
+      while :; do
+        ask_default STATICS_FORMATS "Format names, comma-separated (e.g. six_stops,before_after):" "${csv:-carousel}"
+        ok=1
+        csv_items "$STATICS_FORMATS"
+        for f in ${CSV_ITEMS[@]+"${CSV_ITEMS[@]}"}; do
+          [[ "$f" =~ ^[A-Za-z0-9_-]+$ ]] || { warn "letters, digits, _ and - only: $f"; ok=0; }
+        done
+        (( ${#CSV_ITEMS[@]} )) || ok=0
+        (( ok )) && break
+      done
+      ;;
+  esac
+
+  # Newsletter canonical CTA on every static caption.
+  if [[ "$(pdefault .cta.static_cta "")" == newsletter-canon ]]; then def=yes; else def=no; fi
+  ask_default STATIC_CTA_YN "End every static caption with the newsletter canonical CTA (yes/no):" "$def"
+  STATIC_CTA=""
+  CTA_SCRIPT="$(pdefault .cta.cta_script "")"
+  if [[ "$STATIC_CTA_YN" =~ ^[Yy] ]]; then
+    STATIC_CTA=newsletter-canon
+    while :; do
+      ask_default CTA_SCRIPT "CTA script (claude-social-media-skills/_shared/cta.sh):" "${CTA_SCRIPT:-~/dev/claude-social-media-skills/_shared/cta.sh}"
+      p="$(expand_tilde "$CTA_SCRIPT")"
+      if [[ -f "$p" && -x "$p" ]]; then
+        printf '  %s✓ found%s %s (executable)\n' "$GREEN" "$RESET" "$p"
+        break
+      fi
+      warn "not an executable file: $p"
+      if [[ -n "$CTA_SCRIPT" ]] && confirm "Keep it anyway (fix it before the first image post)?"; then
+        SKIPPED+=("cta.cta_script $p must be an executable file")
+        break
+      fi
+    done
+    # The newest newsletter title comes from the voice corpus; the profile does
+    # not load without it.
+    while [[ -z "$VOICE_CORPUS" ]]; do
+      warn "the newsletter CTA needs copy.voice_corpus (the newest newsletter title comes from it)"
+      ask_default VOICE_CORPUS "Voice corpus path:" "$CONFIG_ROOT/voice/$PROFILE.json"
+    done
+    p="$(expand_tilde "$VOICE_CORPUS")"
+    if [[ -f "$p" ]]; then
+      printf '  %s✓ found%s copy.voice_corpus %s\n' "$GREEN" "$RESET" "$p"
+    else
+      warn "copy.voice_corpus $p does not exist yet; build it before the first image post"
+      SKIPPED+=("copy.voice_corpus $p (needed by cta.static_cta newsletter-canon)")
+    fi
+  fi
+
+  # Buffer format tags: the newsletter skills' format-tag keys, per format.
+  # The templates engine uses buffer.tags (stage 7) unless the brand shares the
+  # newsletter process and takes these instead.
+  FORMAT_TAGS='{}'
+  ok=1
+  if [[ "$STATICS_ENGINE" == templates ]]; then
+    if [[ -n "$(pdefault '.buffer.format_tags | length | select(. > 0)' "")" ]]; then def=yes; else def=no; fi
+    ask_default FTAGS_YN "Tag statics with the newsletter skills' format tags instead of the stage 7 tags (yes/no):" "$def"
+    [[ "$FTAGS_YN" =~ ^[Yy] ]] || ok=0
+  fi
+  if (( ok )); then
+    say "Buffer format tag per format: 'carousel' for a multi-image post, 'verbatim_quote'"
+    say "for a single card showing a verbatim transcript quote, blank = untagged (the skill"
+    say "then raises it as a decision instead of mislabelling it)."
+    csv_items "$STATICS_FORMATS"
+    for f in ${CSV_ITEMS[@]+"${CSV_ITEMS[@]}"}; do
+      case "$f" in carousel) def=carousel ;; quote) def=verbatim_quote ;; *) def="" ;; esac
+      while :; do
+        ask_default tag "  format tag for $f (carousel, verbatim_quote, blank = none):" \
+          "$(pdefault ".buffer.format_tags[\"$f\"]" "$def")"
+        case "$tag" in ""|carousel|verbatim_quote) break ;; esac
+        warn "carousel, verbatim_quote or blank"
+      done
+      if [[ -n "$tag" ]]; then
+        FORMAT_TAGS=$(jq -c --arg k "$f" --arg v "$tag" '. + {($k): $v}' <<<"$FORMAT_TAGS")
+      fi
+    done
+  fi
+}
+
 run_wizard() {
 
 TOTAL_STAGES=12
@@ -510,6 +712,8 @@ ask_default REMOVE_FILLER "Remove filler words in shorts (true/false):" "$(pdefa
 # ── 7 ──────────────────────────────────────────────────────────────────────
 stage "Buffer tags and channels"
 say "Statics post through Buffer with one format tag each so /flywheel can measure them."
+note "These four tags serve the templates engine. newsletter-carousel and custom-html use"
+note "the newsletter skills' format tags instead (asked in stage 10); leave these blank then."
 open_url "https://publish.buffer.com"
 step "Settings → Tags → create these four (exact names):"
 for t in format:video-quote format:video-carousel format:video-still format:video-frame-carousel; do note "  $t"; done
@@ -617,14 +821,19 @@ ask_default BOILERPLATE "Caption boilerplate appended on Instagram/TikTok (blank
 ask_default LM_NEWSLETTER "Lead magnet URL 'newsletter' (blank = none):" "$(pdefault .cta.lead_magnets.newsletter "")"
 ask_default LM_DISCORD "Lead magnet URL 'discord' (blank = none):" "$(pdefault .cta.lead_magnets.discord "")"
 ask_default DM_KEYWORD "Comment-to-DM keyword for instagram/tiktok (blank = none):" "$(pdefault .cta.comment_to_dm.instagram "")"
-TEMPLATES_DIR="$PROFILES_DIR/$PROFILE/templates"
-mkdir -p "$TEMPLATES_DIR"
+ask_statics
+if [[ "$STATICS_ENGINE" == templates ]]; then mkdir -p "$(expand_tilde "$TEMPLATES_DIR")"; fi
 
+# The profile is rebuilt on top of the existing file: every field this wizard
+# asks about is set from the answers, and anything else (hand-set values,
+# extra, brand tokens of an unused engine, more cadence or channel keys) is kept.
 # The ACCT_*, BTAG_*, BCHAN_* and CAD_* values are set by ask_default via printf -v.
 # The inbox is stored with a literal ~ on purpose: the Go binary expands it, so the
 # profile stays portable across users.
+OLD_PROFILE=/dev/null
+[[ -f "$PROFILE_FILE" ]] && OLD_PROFILE="$PROFILE_FILE"
 # shellcheck disable=SC2154,SC2088
-jq -n \
+jq -n --slurpfile old "$OLD_PROFILE" \
   --arg name "$PROFILE" --arg display "$BRAND_DISPLAY" --arg site "$BRAND_SITE" \
   --arg inbox "~/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/longform-inbox/$PROFILE" \
   --arg orientation "$ORIENTATION" --argjson stitch "$STITCH" --argjson stitch_win "${STITCH_WINDOW:-90}" \
@@ -644,43 +853,59 @@ jq -n \
   --arg bt_quote "$BTAG_video_quote" --arg bt_carousel "$BTAG_video_carousel" --arg bt_still "$BTAG_video_still" --arg bt_frame "$BTAG_video_frame_carousel" \
   --arg templates "$TEMPLATES_DIR" --arg slack "$SLACK_CHANNEL" \
   --arg album "$PHOTOS_ALBUM" --arg osxphotos "${OSXPHOTOS:-}" --argjson dlmissing "$PHOTOS_DL_MISSING" --arg plibrary "$PHOTOS_LIBRARY" \
-  '{
-    name: $name,
-    brand: { display: $display, site: $site },
-    inbox: $inbox,
-    photos: ({ enabled: ($album != ""), album: $album, download_missing: $dlmissing } + (if $osxphotos == "" then {} else { osxphotos: $osxphotos } end) + (if $plibrary == "" then {} else { library: $plibrary } end)),
-    orientation: $orientation,
-    stitch: { enabled: $stitch, session_window_min: $stitch_win },
-    stabilize: { enabled: $stab, shakiness: 5, smoothing: 15, zoom: 3 },
-    censor: { enabled: true, mode: $censor_mode, extra: ($censor_extra | split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0))) },
-    transcribe: { model: $whisper, language: "en", threads: 0 },
-    opusclip: {
-      template_id: $template,
-      strip_overlay: $strip,
-      shorts: ({ model: $smodel, durations: [30, 60, 90], aspect: "portrait", remove_filler: $filler } + (if $sprompt == "" then {} else { prompt: $sprompt } end)),
-      full: { skip_curate: true, aspect: $orientation },
-      accounts: ({ youtube: $a_youtube, instagram: $a_instagram, facebook: $a_facebook, linkedin_page: $a_linkedin_page, linkedin_profile: $a_linkedin_profile, tiktok: $a_tiktok } | with_entries(select(.value != ""))),
-      sub_accounts: ({ instagram: $s_instagram, facebook: $s_facebook, linkedin_page: $s_linkedin_page, linkedin_profile: $s_linkedin_profile } | with_entries(select(.value != "")))
-    },
-    cadence: { youtube: $c_youtube, instagram: $c_instagram, linkedin: $c_linkedin, tiktok: $c_tiktok, facebook: $c_facebook },
-    slots_local: ($slots | split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0))),
-    timezone: $tz,
-    backlog_days: $backlog,
-    cta: {
-      lead_magnets: ({ newsletter: $lm_news, discord: $lm_discord } | with_entries(select(.value != ""))),
-      comment_to_dm: (if $dm == "" then {} else { instagram: $dm, tiktok: $dm } end),
-      utm_source_by_platform: true
-    },
-    copy: ({ style: $style } + (if $corpus == "" then {} else { voice_corpus: $corpus } end) + (if $boiler == "" then {} else { boilerplate: $boiler } end)),
-    buffer: {
-      channels: ({ instagram: $bc_instagram, linkedin: $bc_linkedin, facebook: $bc_facebook, threads: $bc_threads } | with_entries(select(.value != ""))),
-      tags: ({ video_quote: $bt_quote, video_carousel: $bt_carousel, video_still: $bt_still, video_frame_carousel: $bt_frame } | with_entries(select(.value != "")))
-    },
-    statics: { templates_dir: $templates, formats: ["quote", "carousel", "still", "frame_carousel"] },
-    notify: ({ macos: true } + (if $slack == "" then {} else { slack_channel: $slack } end))
-  }' > "$PROFILE_FILE.tmp" && mv "$PROFILE_FILE.tmp" "$PROFILE_FILE"
+  --arg engine "$STATICS_ENGINE" --arg formats "$STATICS_FORMATS" --arg carousel "$CAROUSEL_DIR" \
+  --arg refdir "$REFERENCE_DIR" --argjson tokens "$BRAND_TOKENS" --argjson ftags "$FORMAT_TAGS" \
+  --arg static_cta "$STATIC_CTA" --arg cta_script "$CTA_SCRIPT" \
+  'def csv: split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0));
+   def dflt(p; v): if getpath(p) == null then setpath(p; v) else . end;
+   def setor(p; v): if v == "" then delpaths([p]) else setpath(p; v) end;
+   def nonempty: with_entries(select(.value != ""));
+   ($old[0] // {})
+   | .name = $name
+   | .brand.display = $display | .brand.site = $site
+   | (if $engine == "custom-html" then .brand += $tokens else . end)
+   | .inbox = $inbox
+   | .photos.enabled = ($album != "") | .photos.album = $album | .photos.download_missing = $dlmissing
+   | (if $osxphotos == "" then . else .photos.osxphotos = $osxphotos end)
+   | setor(["photos","library"]; $plibrary)
+   | .orientation = $orientation
+   | .stitch.enabled = $stitch | .stitch.session_window_min = $stitch_win
+   | .stabilize.enabled = $stab
+   | dflt(["stabilize","shakiness"]; 5) | dflt(["stabilize","smoothing"]; 15) | dflt(["stabilize","zoom"]; 3)
+   | dflt(["censor","enabled"]; true) | .censor.mode = $censor_mode | .censor.extra = ($censor_extra | csv)
+   | .transcribe.model = $whisper | dflt(["transcribe","language"]; "en") | dflt(["transcribe","threads"]; 0)
+   | .opusclip.template_id = $template
+   | .opusclip.strip_overlay = $strip
+   | .opusclip.shorts.model = $smodel | .opusclip.shorts.remove_filler = $filler
+   | dflt(["opusclip","shorts","durations"]; [30, 60, 90]) | dflt(["opusclip","shorts","aspect"]; "portrait")
+   | setor(["opusclip","shorts","prompt"]; $sprompt)
+   | dflt(["opusclip","full","skip_curate"]; true) | .opusclip.full.aspect = $orientation
+   | .opusclip.accounts = ({ youtube: $a_youtube, instagram: $a_instagram, facebook: $a_facebook, linkedin_page: $a_linkedin_page, linkedin_profile: $a_linkedin_profile, tiktok: $a_tiktok } | nonempty)
+   | .opusclip.sub_accounts = ({ instagram: $s_instagram, facebook: $s_facebook, linkedin_page: $s_linkedin_page, linkedin_profile: $s_linkedin_profile } | nonempty)
+   | .cadence = ((.cadence // {}) + { youtube: $c_youtube, instagram: $c_instagram, linkedin: $c_linkedin, tiktok: $c_tiktok, facebook: $c_facebook })
+   | .slots_local = ($slots | csv)
+   | .timezone = $tz
+   | .backlog_days = $backlog
+   | .cta.lead_magnets = ((.cta.lead_magnets // {}) + { newsletter: $lm_news, discord: $lm_discord } | nonempty)
+   | .cta.comment_to_dm = ((.cta.comment_to_dm // {}) + { instagram: $dm, tiktok: $dm } | nonempty)
+   | dflt(["cta","utm_source_by_platform"]; true)
+   | setor(["cta","static_cta"]; $static_cta)
+   | (if $static_cta == "" then . else setor(["cta","cta_script"]; $cta_script) end)
+   | .copy.style = $style | setor(["copy","voice_corpus"]; $corpus) | setor(["copy","boilerplate"]; $boiler)
+   | .buffer.channels = ((.buffer.channels // {}) + { instagram: $bc_instagram, linkedin: $bc_linkedin, facebook: $bc_facebook, threads: $bc_threads } | nonempty)
+   | .buffer.tags = ((.buffer.tags // {}) + { video_quote: $bt_quote, video_carousel: $bt_carousel, video_still: $bt_still, video_frame_carousel: $bt_frame } | nonempty)
+   | (if $ftags == {} then delpaths([["buffer","format_tags"]]) else .buffer.format_tags = $ftags end)
+   | .statics.engine = $engine
+   | .statics.formats = ($formats | csv)
+   | (if $engine == "templates" then .statics.templates_dir = $templates else . end)
+   | (if $engine == "newsletter-carousel" then .statics.carousel_dir = $carousel else . end)
+   | (if $engine == "custom-html" then setor(["statics","reference_dir"]; $refdir) else . end)
+   | dflt(["notify","macos"]; true) | setor(["notify","slack_channel"]; $slack)
+  ' > "$PROFILE_FILE.tmp" && mv "$PROFILE_FILE.tmp" "$PROFILE_FILE"
 printf '  %s✓ wrote%s %s\n' "$GREEN" "$RESET" "$PROFILE_FILE"
-note "templates for statics go in $TEMPLATES_DIR (see docs/templates.md)"
+if [[ "$STATICS_ENGINE" == templates ]]; then
+  note "templates for statics go in $TEMPLATES_DIR (see docs/templates.md)"
+fi
 pause
 
 # ── 11 ─────────────────────────────────────────────────────────────────────

@@ -3,8 +3,11 @@
 One JSON file per brand at `~/.config/longform-pipeline/profiles/<name>.json`
 (`LONGFORM_CONFIG_DIR` overrides the root). The Go struct is
 `internal/model/profile.go`; this page is the human-readable twin. `/longform-pipeline:longform-setup`
-writes every field; you can edit the file by hand and re-run `longform status` to
-validate (a bad profile is reported, never silently defaulted).
+writes every field; you can edit the file by hand and validate it with any `--profile`
+command that has no side effects, for example
+`echo '[]' > /tmp/none.json && longform gate validate --profile <p> --cells /tmp/none.json`
+(a bad profile exits 65 and names the field, never silently defaulted). `longform status`
+does not load profiles.
 
 Paths may start with `~`; the binary expands it. Unknown top-level keys are an error;
 put anything extra under `extra`.
@@ -144,6 +147,7 @@ put anything extra under `extra`.
 | `engine` | `templates` \| `newsletter-carousel` \| `custom-html` | `templates` | How statics are made. `templates` fills `templates_dir/<format>.html` in the approval phase (`brief render-statics`). `newsletter-carousel` reuses the EVC newsletter carousel system in `carousel_dir`: two-zone slides, illustrations from its `templates/gen_illustration.py` (Gemini with the EVC banner as style reference), rendered by its `templates/render.sh` (`brief render-carousel`, draft phase). `custom-html` renders HTML the skill designs per post from `brand.palette`, `brand.fonts` and `brand.logo_text` (`brief render-html`, draft phase). Both draft-phase engines render 1080x1350 PNGs so the visual review happens before approval. |
 | `templates_dir` | path | `""` | Engine `templates`: folder with `<format>.html` exported from Claude Design (`docs/templates.md`). |
 | `carousel_dir` | path | `""` | Engine `newsletter-carousel` (required): `claude-social-media-skills/carousel-newsletter`. Its parent is taken as the skills repo (for `_shared/cta.sh`). |
+| `reference_dir` | path | omitted | Engine `custom-html` only: a folder of approved designs, a `README.md` with the design principles plus one subfolder per approved design (its HTML generator, rendered PNGs and captions), for example `~/.config/longform-pipeline/profiles/evc/designs`. The skill reads them before designing and keeps new posts in that visual language unless the user asks for something new. When set it must be an existing directory (validation). |
 | `formats` | string[] | `[]` | Engine `templates`: subset of `quote`, `carousel`, `still`, `frame_carousel`. Engine `newsletter-carousel`: `carousel` (10-slide, two-zone, illustrated) and/or `quote` (one illustrated quote card). Engine `custom-html`: free names (for example `six_stops`, `before_after`). |
 
 ## `notify`
@@ -233,7 +237,8 @@ read the Photos library" and `longform photos-watch` exits `69`.
 ```
 
 For `custom-html` instead, set `"statics": {"engine": "custom-html", "formats":
-["six_stops", "before_after"]}` and the brand tokens, for example `"brand":
+["six_stops", "before_after"], "reference_dir":
+"~/.config/longform-pipeline/profiles/evc/designs"}` and the brand tokens, for example `"brand":
 {"display": "Enterprise Vibe Code", "site": "...", "palette": {"navy": "#14386B",
 "green": "#2D8A3E", "yellow": "#F2B705", "cream": "#F5ECD7"}, "fonts": ["Inter,
 'Helvetica Neue', sans-serif"], "logo_text": "Enterprise Vibe Code"}`, with

@@ -35,7 +35,11 @@ split into what you do once per brand and what you do per video.
    illustrated carousel; needs `statics.carousel_dir`, Google ADC for Gemini
    and `~/Pictures/evc_banner2.png`, as in the carousel-newsletter skill), or
    `custom-html` (the editorial session designs each post's HTML from
-   `brand.palette`, `brand.fonts` and `brand.logo_text`). For the newsletter
+   `brand.palette`, `brand.fonts` and `brand.logo_text`; point
+   `statics.reference_dir` at a folder of approved designs, a `README.md` with
+   the design principles plus one subfolder per design, for example
+   `~/.config/longform-pipeline/profiles/evc/designs`, and new posts follow
+   that visual language). The wizard asks for all of these in stage 10. For the newsletter
    CTA on every image post set `cta.static_cta: "newsletter-canon"`.
 5. **Add the iPhone Shortcuts** for the profile. Give the wizard a Photos album
    name (stage 9) and create that album, same exact name, in Photos on the
