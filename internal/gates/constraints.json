@@ -9,9 +9,12 @@
     }
   },
   "facebook": {
-    "post_text_field": "title",
-    "title_source": "post_text",
-    "fields": { "title": { "max_runes": 2200, "required": true } }
+    "post_text_field": "description",
+    "title_source": "separate",
+    "fields": {
+      "title": { "max_runes": 255, "max_runes_kinds": ["clip", "full"], "required": true },
+      "description": { "max_runes": 2200 }
+    }
   },
   "instagram": {
     "post_text_field": "title",

@@ -24,6 +24,19 @@ split into what you do once per brand and what you do per video.
 
    Without them clips and the full video still post; only the static image
    posts wait.
+
+   For a brand that shares the newsletter process (EVC), skip these four: set
+   `buffer.format_tags` instead (`{"carousel": "carousel", "quote":
+   "verbatim_quote"}`). The posts then carry the newsletter skills' own
+   `format:carousel` and `format:verbatim-quote` tags, whose ids already sit in
+   `claude-social-media-skills/_shared/buffer-post-prep/tag-ids.local.json`.
+4a. **Pick the static engine** (`statics.engine`, see `profile-schema.md`):
+   `templates` (default, BJJ), `newsletter-carousel` (EVC's 10-slide
+   illustrated carousel; needs `statics.carousel_dir`, Google ADC for Gemini
+   and `~/Pictures/evc_banner2.png`, as in the carousel-newsletter skill), or
+   `custom-html` (the editorial session designs each post's HTML from
+   `brand.palette`, `brand.fonts` and `brand.logo_text`). For the newsletter
+   CTA on every image post set `cta.static_cta: "newsletter-canon"`.
 5. **Add the iPhone Shortcuts** for the profile. Give the wizard a Photos album
    name (stage 9) and create that album, same exact name, in Photos on the
    phone. The wizard builds and signs two shortcuts on the Mac: "Mark for
@@ -93,6 +106,12 @@ macOS notifications fire regardless.
    `decide d1 <option>`, `reject <note>`. The note is everything after
    `reject`, commas and all, so make it the last clause.
 
+With the `newsletter-carousel` or `custom-html` engine the brief already
+shows the finished images, each with the caption it will post and an
+independent visual review. Read them side by side: any later change to an image
+or a caption voids that review and the image post is blocked until it is
+reviewed again.
+
 Nothing posts until step 5. After approval the schedule is enforced by the
 gates (platform caps, cadence, profanity in titles), the manifest records every
 scheduled post, and the weekly flywheel measures the result.
@@ -127,6 +146,57 @@ connector's `opusclip_list_scheduled_posts` shows each post as scheduled,
 posted or failed, with the link and the failure reason), and look at the
 Buffer queue for the image posts. The check runs once per job, right after
 approval, so it confirms the schedule exists, not that each post went out.
+
+## Image posts: hosting and posting
+
+The approval session does these for image posts; they are listed because two
+of them touch another repository.
+
+- **Hosting.** Buffer needs public image URLs. The session follows the
+  newsletter convention: it copies the reviewed PNGs into
+  `claude-social-media-skills/generated/<YYYY-MM-DD>-longform-<slug>/`,
+  commits and pushes them, and uses `raw.githubusercontent.com` URLs pinned to
+  that commit's SHA (never `main`, which can change under a queued post). It
+  then runs `longform gate statics --job <jobdir> --hosted`, which downloads
+  every URL and refuses any whose bytes differ from the reviewed file.
+- **The skills repo's pre-commit check** refuses commits while
+  `_shared/adversarial-review` drifts from mike-skills. The fix is
+  `_shared/adversarial-review/sync.sh --apply`, committed on its own before the
+  image commit. Never `--no-verify`.
+- **Buffer.** Every post's arguments come from
+  `_shared/buffer-post-prep/buffer-post-prep` (caps, channel deny-list, the
+  format tag id, platform metadata); a carousel attaches every slide URL. The
+  session checks the Buffer queue for overlap first, reads every post back with
+  `get_post` afterwards, then lists posts in `error` status.
+- **Buffer MCP in the CLI only.** If the Buffer connector exists only in the
+  Claude CLI's config, the session drives it headlessly:
+  `env -u CLAUDE_CONFIG_DIR claude -p "<call>" --allowedTools mcp__buffer__create_post,mcp__buffer__get_post,mcp__buffer__list_posts`,
+  passing the prepared arguments verbatim.
+
+## Consistency with the newsletter process
+
+What the longform image posts share with the Enterprise Vibe Code newsletter
+skills, and where each piece lives (all paths in
+`~/dev/claude-social-media-skills` unless noted):
+
+| Shared piece | Lives in | Longform side |
+|---|---|---|
+| Canonical "Comment newsletter" CTA | `_shared/cta.sh` | `brief newsletter-cta`, enforced by `gate statics` (`cta.static_cta: newsletter-canon`) |
+| Latest newsletter title | `_shared/voice-corpus/cache.json` (`profile.copy.voice_corpus`) | newest `source_type == "newsletter"` post |
+| Voice grounding | same corpus | section, stat and hook copy is checked against it |
+| Carousel design, illustrations, render | `carousel-newsletter/templates/` (`0N-*.html`, `gen_illustration.py`, `render.sh`, EVC banner reference) | `statics.engine: newsletter-carousel`, `brief render-carousel` |
+| Carousel structure | `carousel-newsletter/SKILL.md` Phase 2 | 10 slides, verbatim quotes ≤ 260 chars, CTA accent word `newsletter`, checked by `brief render-carousel` |
+| Image-caption alignment gate | `PATTERNS.md` "Newsletter image-caption alignment" | `visual_review` in `draft.json`, `gate statics` (incl. `--hosted` digests) |
+| Buffer argument builder | `_shared/buffer-post-prep/` | every static post |
+| Format tags and ids | `_shared/format_tags.json`, `_shared/buffer-post-prep/tag-ids.local.json` | `buffer.format_tags` |
+| Queue overlap check | `PATTERNS.md` "Buffer queue + recently-sent overlap check", `_shared/buffer-queue-check` | before posting |
+| Readback after posting | `PATTERNS.md` (get_post comparison) | after posting, plus `list_posts status:[error]` |
+| Public hosting | `generated/<date>-<slug>/` + raw URLs | `generated/<date>-longform-<slug>/`, SHA-pinned |
+| Adversarial review | `_shared/adversarial-review` | skill Phase 6 |
+
+What differs on purpose: clips keep their per-platform CTA rules and go
+through OpusClip, and the `custom-html` engine replaces the carousel templates
+with a design made per post from the same brand tokens.
 
 ## Suggested first run
 

@@ -429,3 +429,80 @@ func TestStaticCellCarriesCaptionAsTitleAndPassesGate(t *testing.T) {
 		t.Fatalf("gate validate on the static cells: exit %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
 }
+
+// TestFacebookCellsCarryShortTitleAndCaption: OpusClip refuses a Facebook
+// title over 255 characters, so parse-decision writes every Facebook clip
+// cell as title = short_title, description = the full caption, whichever
+// convention the draft used; the full video's Facebook cell gets the short
+// title and its own caption, never YouTube's description. The cells pass
+// the gate's 255-rune Facebook title cap.
+func TestFacebookCellsCarryShortTitleAndCaption(t *testing.T) {
+	long := strings.Repeat("Every word of this caption is grounded in the talk. ", 8) // > 255 runes
+	clip := Clip{ShortTitle: "Short claim", DurationSec: 30}
+	for name, cell := range map[string]Cell{
+		"caption-as-title draft": {Platform: "facebook", Title: long},
+		"separate-title draft":   {Platform: "facebook", Title: "Short claim", Description: long},
+	} {
+		title, desc := ClipCellFields(clip, cell)
+		if title != "Short claim" || desc != long {
+			t.Errorf("%s: title=%q desc=%d runes, want short_title and the caption", name, title, len([]rune(desc)))
+		}
+	}
+	if title, desc := ClipCellFields(clip, Cell{Platform: "instagram", Title: long}); title != long || desc != "" {
+		t.Errorf("instagram must pass through: %q %q", title, desc)
+	}
+
+	fv := FullVideo{Title: "Full title", Description: "YouTube description\n00:00 Intro", Captions: map[string]string{"facebook": long}}
+	if title, desc := FullVideoFields(fv, "facebook"); title != "Full title" || desc != long {
+		t.Errorf("full facebook: %q / %q", title, desc)
+	}
+	if title, desc := FullVideoFields(fv, "youtube"); title != "Full title" || desc != fv.Description {
+		t.Errorf("full youtube: %q / %q", title, desc)
+	}
+	fv.Captions = nil
+	if title, desc := FullVideoFields(fv, "facebook"); title != "Full title" || desc != fv.Description {
+		t.Errorf("full facebook without a caption falls back to the description: %q / %q", title, desc)
+	}
+
+	// Through parse-decision and the gate.
+	job, d := fixtureJob(t)
+	d.FullVideo.Platforms = []string{"youtube", "facebook"}
+	d.FullVideo.Captions = map[string]string{"facebook": long}
+	d.Clips[0].Cells = append(d.Clips[0].Cells, Cell{Platform: "facebook", AccountID: "fb-acct", SubAccountID: "fb-page", Title: long, Hashtags: []string{}, PublishAt: "2026-10-24T19:00:00Z"})
+	prof := testProfile()
+	prof.OpusClip.Accounts["facebook"] = "fb-acct"
+	prof.OpusClip.SubAccounts["facebook"] = "fb-page"
+	if _, err := WriteBrief(job, prof, d, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := ParseGrammar("approve", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sch, err := ApplyDecision(job, prof, d, rec, time.Date(2026, 10, 21, 17, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fb []gates.Cell
+	for _, c := range sch.Cells {
+		if c.Platform != "facebook" {
+			continue
+		}
+		want := map[string]string{"clip": "Late but great", "full": "Full title"}[c.Kind]
+		if c.Title != want || c.Description != long {
+			t.Errorf("%s facebook cell: title=%q description=%q", c.Kind, c.Title, c.Description)
+		}
+		fb = append(fb, gates.Cell{Kind: c.Kind, ClipID: c.ClipID, Platform: c.Platform, AccountID: c.AccountID, SubAccountID: c.SubAccountID, Title: c.Title, Description: c.Description, Hashtags: c.Hashtags, DurationSec: 30, PublishAt: "2026-10-24T19:00:00Z", Label: c.Label})
+	}
+	if len(fb) != 2 {
+		t.Fatalf("facebook cells = %d: %+v", len(fb), sch.Cells)
+	}
+	gp := *prof
+	gp.Censor.Mode = "beep"
+	gp.OpusClip.Shorts.Model = "ClipBasic"
+	gp.Cadence = map[string]int{"facebook": 2}
+	vs, err := gates.Validate(&gp, fb, nil, gates.Options{Now: time.Date(2026, 10, 21, 17, 0, 0, 0, time.UTC)})
+	if err != nil || len(vs) != 0 {
+		t.Fatalf("facebook cells must pass the gate: %v %+v", err, vs)
+	}
+}

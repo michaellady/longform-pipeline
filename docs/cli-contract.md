@@ -409,6 +409,87 @@ cells (`kind: "static"`, posted through Buffer):
 - `brief parse-decision` writes a static's caption as both `title` and
   `description`, so the caps check passes it as written.
 
+- Facebook is a separate-title platform: a Facebook clip or full cell's
+  `title` is capped at 255 runes (OpusClip's limit) and the caption goes in
+  `description` (≤ 2200). Statics are exempt from the 255 cap.
+
+## Statics: `brief render-carousel`, `brief render-html`, `brief newsletter-cta`, `gate statics`
+
+Transport for the static image posts; every design and copy choice stays in
+the skill. All print JSON on stdout and diagnostics on stderr; exit 0 ok,
+64 usage, 65 refused input or a verdict, 70 internal.
+
+```
+longform brief render-carousel --job <jobdir> [--only <static-id>] [--illustrate] [--gen-interval 15s]
+```
+
+Profile `statics.engine: newsletter-carousel` only. First checks every
+`carousel` and `quote` static, and refuses (65, every problem listed, nothing
+generated) unless: a carousel is exactly 10 slides in carousel-newsletter's
+order (hook, section, quote, stat, quote, section, quote, stat or section,
+section, cta) and a quote static is one `quote` slide; every template
+placeholder has a field; each quote is ≤ 260 characters and a verbatim span of
+`analysis/transcript.json` (words in order, case and punctuation ignored);
+the CTA accent word is `newsletter`; each slide has a `scene` or an existing
+illustration. Then, per slide, a missing illustration is generated only with
+`--illustrate` (`python3 <carousel_dir>/templates/gen_illustration.py
+"<scene>" <png> --aspect <4:3|9:16|16:9>`, `--gen-interval` apart; without the
+flag a missing one is refused), the template is filled (values HTML-escaped,
+`ILLUS_IMG`, `PAGE_CURRENT`, `PAGE_TOTAL` set by the binary) into
+`statics/<id>/html/slide-NN.html` and rendered with `bash
+<carousel_dir>/templates/render.sh` to `statics/<id>/slide-NN.png`, which must
+be 1080x1350. Older `slide-*.png` files of that static are removed first.
+`statics/<id>/index.json` lists the files (every platform gets every slide).
+Stdout: one line per static, `{"id","format","files":[{"path","sha256","width","height"}]}`.
+`LONGFORM_GEN_ILLUSTRATION` and `LONGFORM_CAROUSEL_RENDER` override the two
+commands (tests).
+
+```
+longform brief render-html --job <jobdir> [--only <static-id>]
+```
+
+Profile `statics.engine: custom-html` only. Each static's `inputs.pages`
+(1..20 job-relative `.html` files the skill wrote, inside the job directory, no
+unfilled `{{TOKEN}}`) is rendered with headless Chrome (`LONGFORM_CHROME`) to
+`statics/<id>/slide-NN.png` at 1080x1350, with `index.json` and the same stdout
+lines as `render-carousel`.
+
+`brief render-statics` exits 0 without rendering when the engine is
+`newsletter-carousel` or `custom-html`.
+
+```
+longform brief newsletter-cta (--profile <name> | --job <jobdir>) [--json]
+```
+
+Prints the canonical CTA: the output of `cta.cta_script` (default
+`<carousel_dir>/../_shared/cta.sh`) given the title of the newest post with
+`source_type == "newsletter"` in `copy.voice_corpus`. `--json` prints
+`{"title","url","published_at","cta"}`. 65 when the corpus has no newsletter.
+
+```
+longform gate statics --job <jobdir> [--hosted] [--list]
+```
+
+The image-caption alignment gate. Checks every static the job will post (the
+static cells of `review/schedule.json` once the job is approved, else every
+draft static) and prints one verdict per problem in the `gate validate` shape
+(`clip_id` is the static id), exit 65:
+
+- rendered PNGs exist (`index.json`, else `statics/<id>/*.png`);
+- `visual_review` exists, `verdict` is `PASS`, `reviewer` and `evidence` are
+  set;
+- the review is fresh: its `caption` equals the static's caption and every
+  scheduled caption, and its `images` are exactly the rendered PNGs with the
+  same sha256;
+- on `instagram`, every image's width/height is within 0.8..1.91;
+- with `cta.static_cta: newsletter-canon`, every caption ends with the
+  canonical CTA;
+- with `--hosted`, every `images[].url` is https, answers 200, and its bytes
+  hash to the reviewed sha256.
+
+`--list` prints `{"<static id>": [{"path","sha256","width","height"}]}` and
+checks nothing.
+
 ## Post-approval: `manifest seal`, `monitor`, `close`
 
 The approval phase of the `longform-publish` skill schedules every approved

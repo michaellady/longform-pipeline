@@ -39,6 +39,12 @@ type Profile struct {
 type Brand struct {
 	Display string `json:"display"`
 	Site    string `json:"site"`
+	// Brand tokens for statics.engine custom-html: the skill designs each
+	// post's HTML from these (name -> CSS colour, font stacks, the wordmark
+	// text). Optional for the other engines.
+	Palette  map[string]string `json:"palette,omitempty"`
+	Fonts    []string          `json:"fonts,omitempty"`
+	LogoText string            `json:"logo_text,omitempty"`
 }
 
 // PhotosConfig is the second feed: recordings the phone tags into an Apple
@@ -125,6 +131,31 @@ type CTAConfig struct {
 	LeadMagnets         map[string]string `json:"lead_magnets"`  // name -> url
 	CommentToDM         map[string]string `json:"comment_to_dm"` // platform -> keyword
 	UTMSourceByPlatform bool              `json:"utm_source_by_platform"`
+	// StaticCTA "newsletter-canon": every static caption, on every channel,
+	// ends with the canonical newsletter CTA (_shared/cta.sh with the title
+	// of the newest newsletter in copy.voice_corpus). "" keeps the per-style
+	// rules. Clips are never affected.
+	StaticCTA string `json:"static_cta,omitempty"`
+	// CTAScript is the cta.sh to run; empty = <carousel_dir>/../_shared/cta.sh.
+	CTAScript string `json:"cta_script,omitempty"`
+}
+
+// Values for CTAConfig.StaticCTA.
+const StaticCTANewsletterCanon = "newsletter-canon"
+
+// CTAScriptPath is the canonical CTA script: cta.cta_script, else
+// _shared/cta.sh in the repo that holds statics.carousel_dir, else "".
+func (p *Profile) CTAScriptPath() string {
+	if p == nil {
+		return ""
+	}
+	if p.CTA.CTAScript != "" {
+		return p.CTA.CTAScript
+	}
+	if p.Statics.CarouselDir != "" {
+		return filepath.Join(filepath.Dir(filepath.Clean(p.Statics.CarouselDir)), "_shared", "cta.sh")
+	}
+	return ""
 }
 
 type CopyConfig struct {
@@ -135,7 +166,13 @@ type CopyConfig struct {
 
 type BufferConfig struct {
 	Channels map[string]string `json:"channels"` // platform -> channel id
-	Tags     map[string]string `json:"tags"`     // format key -> tag id
+	Tags     map[string]string `json:"tags"`     // format key -> tag id (templates engine)
+	// FormatTags maps a static format to the newsletter skills' format-tag
+	// key (claude-social-media-skills/_shared/format_tags.json), passed to
+	// buffer-post-prep --format-tag, which takes the tag id from its own
+	// tag-ids.local.json. Example: {"carousel": "carousel", "quote":
+	// "verbatim_quote"}. When set, it replaces Tags for statics.
+	FormatTags map[string]string `json:"format_tags,omitempty"`
 }
 
 // BufferChannel is the Buffer channel id for a cell platform: the exact key
@@ -156,8 +193,39 @@ func (p *Profile) BufferChannel(platform string) string {
 }
 
 type StaticsConfig struct {
+	// Engine picks how statics are made: "" or "templates" (default) fills
+	// <templates_dir>/<format>.html; "newsletter-carousel" uses the EVC
+	// newsletter carousel system in carousel_dir (two-zone slides with
+	// generated illustrations, `longform brief render-carousel`);
+	// "custom-html" renders HTML the skill designed per post from the brand
+	// tokens (`longform brief render-html`).
+	Engine       string   `json:"engine,omitempty"`
 	TemplatesDir string   `json:"templates_dir"`
+	CarouselDir  string   `json:"carousel_dir,omitempty"` // claude-social-media-skills/carousel-newsletter
 	Formats      []string `json:"formats"`
+}
+
+// Values for StaticsConfig.Engine.
+const (
+	StaticsEngineTemplates          = "templates"
+	StaticsEngineNewsletterCarousel = "newsletter-carousel"
+	StaticsEngineCustomHTML         = "custom-html"
+)
+
+// CustomHTML reports whether the skill authors each static's HTML itself
+// (rendered by `longform brief render-html`).
+func (p *Profile) CustomHTML() bool {
+	return p != nil && p.Statics.Engine == StaticsEngineCustomHTML
+}
+
+// NewsletterCarouselFormats are the formats the newsletter-carousel engine
+// renders: a 10-slide illustrated carousel and one illustrated quote card.
+var NewsletterCarouselFormats = []string{"carousel", "quote"}
+
+// NewsletterCarousel reports whether statics use the newsletter carousel
+// system.
+func (p *Profile) NewsletterCarousel() bool {
+	return p != nil && p.Statics.Engine == StaticsEngineNewsletterCarousel
 }
 
 type NotifyConfig struct {
@@ -252,6 +320,8 @@ func (p *Profile) applyDefaults() {
 	}
 	p.Inbox = ExpandHome(p.Inbox)
 	p.Statics.TemplatesDir = ExpandHome(p.Statics.TemplatesDir)
+	p.Statics.CarouselDir = ExpandHome(p.Statics.CarouselDir)
+	p.CTA.CTAScript = ExpandHome(p.CTA.CTAScript)
 	p.Copy.VoiceCorpus = ExpandHome(p.Copy.VoiceCorpus)
 	p.Transcribe.Model = ExpandHome(p.Transcribe.Model)
 	p.Photos.Osxphotos = ExpandHome(p.Photos.Osxphotos)
@@ -282,6 +352,42 @@ func (p *Profile) Validate() error {
 	case "ClipBasic", "ClipAnything":
 	default:
 		errs = append(errs, fmt.Errorf("opusclip.shorts.model must be ClipBasic or ClipAnything, got %q", p.OpusClip.Shorts.Model))
+	}
+	switch p.Statics.Engine {
+	case "", StaticsEngineTemplates:
+	case StaticsEngineNewsletterCarousel:
+		if p.Statics.CarouselDir == "" {
+			errs = append(errs, errors.New("statics.carousel_dir is required with statics.engine newsletter-carousel"))
+		}
+		for _, f := range p.Statics.Formats {
+			ok := false
+			for _, k := range NewsletterCarouselFormats {
+				ok = ok || f == k
+			}
+			if !ok {
+				errs = append(errs, fmt.Errorf("statics.formats: %q is not a newsletter-carousel format (carousel, quote)", f))
+			}
+		}
+	case StaticsEngineCustomHTML:
+		for _, f := range p.Statics.Formats {
+			if strings.TrimSpace(f) == "" {
+				errs = append(errs, errors.New("statics.formats: empty format name"))
+			}
+		}
+	default:
+		errs = append(errs, fmt.Errorf("statics.engine must be templates, newsletter-carousel or custom-html, got %q", p.Statics.Engine))
+	}
+	switch p.CTA.StaticCTA {
+	case "":
+	case StaticCTANewsletterCanon:
+		if p.Copy.VoiceCorpus == "" {
+			errs = append(errs, errors.New("cta.static_cta newsletter-canon needs copy.voice_corpus (the newest newsletter title comes from it)"))
+		}
+		if p.CTAScriptPath() == "" {
+			errs = append(errs, errors.New("cta.static_cta newsletter-canon needs cta.cta_script or statics.carousel_dir (to find _shared/cta.sh)"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("cta.static_cta must be newsletter-canon or empty, got %q", p.CTA.StaticCTA))
 	}
 	for k, v := range p.Cadence {
 		if v < 0 {

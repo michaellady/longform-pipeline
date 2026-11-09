@@ -41,6 +41,9 @@ put anything extra under `extra`.
 |---|---|---|
 | `display` | string | Human name used in captions, quote attribution, Shortcut name. |
 | `site` | URL | Brand home; appears in the full-video description. |
+| `palette` | map name -> CSS colour | Optional. Brand tokens the skill designs `custom-html` statics from, e.g. `{"navy":"#14386B","green":"#2D8A3E","yellow":"#F2B705","cream":"#F5ECD7"}`. |
+| `fonts` | string[] | Optional. Font stacks for `custom-html` statics, first is the display face. |
+| `logo_text` | string | Optional. Wordmark text a `custom-html` static shows. |
 
 ## `stitch`
 
@@ -115,6 +118,8 @@ put anything extra under `extra`.
 | `lead_magnets` | map name -> URL | `{}` | Every entry is linked in link-platform captions and the full-video description with UTMs (`utm_source=<platform>`, `utm_medium=clip|longform`, `utm_campaign=longform_<slug>`, `utm_content=<clip_id>`). |
 | `comment_to_dm` | map platform -> keyword | `{}` | On these platforms the CTA is "comment `<keyword>`" instead of a link. |
 | `utm_source_by_platform` | bool | `false` | `true`: `utm_source` is the platform key; `false`: `utm_source=longform`. |
+| `static_cta` | `""` \| `newsletter-canon` | `""` | `newsletter-canon`: every static caption, on every channel, ends with the canonical newsletter CTA, the output of `_shared/cta.sh "<title of the newest newsletter>"`. The title is the newest post with `source_type == "newsletter"` in `copy.voice_corpus` (the Comment-to-DM flow sends the newsletter, not the video). `longform brief newsletter-cta` prints it; `longform gate statics` refuses a caption that does not end with it. Needs `copy.voice_corpus` and a CTA script. Clips keep their per-platform CTA rules. |
+| `cta_script` | path | `<carousel_dir>/../_shared/cta.sh` | The canonical CTA script (claude-social-media-skills `_shared/cta.sh`). |
 
 ## `copy`
 
@@ -129,14 +134,17 @@ put anything extra under `extra`.
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `channels` | map platform -> channel id | `{}` | Buffer channels for statics: `instagram`, `linkedin`, `facebook`, `threads`, optionally `bluesky`, `pinterest`. A cell platform resolves by exact key, else its family before the first `_` (`linkedin` covers `linkedin_page` and `linkedin_profile`). |
-| `tags` | map format -> tag id | `{}` | Keys `video_quote`, `video_carousel`, `video_still`, `video_frame_carousel` for the Buffer tags `format:video-quote` etc. A static whose tag is missing is skipped. |
+| `tags` | map format -> tag id | `{}` | Engine `templates`: keys `video_quote`, `video_carousel`, `video_still`, `video_frame_carousel` for the Buffer tags `format:video-quote` etc. A static whose tag is missing is skipped. |
+| `format_tags` | map static format -> format-tag key | omitted | Replaces `tags` for statics: the key of `claude-social-media-skills/_shared/format_tags.json` passed to `buffer-post-prep --format-tag`, which reads the Buffer tag id from its own `tag-ids.local.json`. Use `{"carousel": "carousel", "quote": "verbatim_quote"}` so longform image posts carry `format:carousel` and `format:verbatim-quote` and `buffer-stats` measures them alongside newsletter posts. A `custom-html` format maps to one of those keys too (a multi-image post to `carousel`; a single card that shows a verbatim transcript quote to `verbatim_quote`). No new tag value is invented: a format with no fitting key is a decision for the user. |
 
 ## `statics`
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `templates_dir` | path | `""` | Folder with `<format>.html` exported from Claude Design (`docs/templates.md`). |
-| `formats` | string[] | `[]` | Subset of `quote`, `carousel`, `still`, `frame_carousel` to produce per job. |
+| `engine` | `templates` \| `newsletter-carousel` \| `custom-html` | `templates` | How statics are made. `templates` fills `templates_dir/<format>.html` in the approval phase (`brief render-statics`). `newsletter-carousel` reuses the EVC newsletter carousel system in `carousel_dir`: two-zone slides, illustrations from its `templates/gen_illustration.py` (Gemini with the EVC banner as style reference), rendered by its `templates/render.sh` (`brief render-carousel`, draft phase). `custom-html` renders HTML the skill designs per post from `brand.palette`, `brand.fonts` and `brand.logo_text` (`brief render-html`, draft phase). Both draft-phase engines render 1080x1350 PNGs so the visual review happens before approval. |
+| `templates_dir` | path | `""` | Engine `templates`: folder with `<format>.html` exported from Claude Design (`docs/templates.md`). |
+| `carousel_dir` | path | `""` | Engine `newsletter-carousel` (required): `claude-social-media-skills/carousel-newsletter`. Its parent is taken as the skills repo (for `_shared/cta.sh`). |
+| `formats` | string[] | `[]` | Engine `templates`: subset of `quote`, `carousel`, `still`, `frame_carousel`. Engine `newsletter-carousel`: `carousel` (10-slide, two-zone, illustrated) and/or `quote` (one illustrated quote card). Engine `custom-html`: free names (for example `six_stops`, `before_after`). |
 
 ## `notify`
 
@@ -207,17 +215,35 @@ read the Photos library" and `longform photos-watch` exits `69`.
       "discord": "https://www.enterprisevibecode.com/discord-server-invite"
     },
     "comment_to_dm": { "instagram": "newsletter", "tiktok": "newsletter" },
-    "utm_source_by_platform": true
+    "utm_source_by_platform": true,
+    "static_cta": "newsletter-canon"
   },
   "copy": { "style": "evc", "voice_corpus": "~/.config/longform-pipeline/voice/evc.json" },
   "buffer": {
     "channels": { "instagram": "ch_ig", "linkedin": "ch_li", "facebook": "ch_fb", "threads": "ch_th" },
-    "tags": { "video_quote": "tag_q", "video_carousel": "tag_c", "video_still": "tag_s", "video_frame_carousel": "tag_fc" }
+    "format_tags": { "carousel": "carousel", "quote": "verbatim_quote" }
   },
-  "statics": { "templates_dir": "~/.config/longform-pipeline/profiles/evc/templates", "formats": ["quote", "carousel", "still", "frame_carousel"] },
+  "statics": {
+    "engine": "newsletter-carousel",
+    "carousel_dir": "~/dev/claude-social-media-skills/carousel-newsletter",
+    "formats": ["carousel", "quote"]
+  },
   "notify": { "slack_channel": "C0123456789", "macos": true }
 }
 ```
+
+For `custom-html` instead, set `"statics": {"engine": "custom-html", "formats":
+["six_stops", "before_after"]}` and the brand tokens, for example `"brand":
+{"display": "Enterprise Vibe Code", "site": "...", "palette": {"navy": "#14386B",
+"green": "#2D8A3E", "yellow": "#F2B705", "cream": "#F5ECD7"}, "fonts": ["Inter,
+'Helvetica Neue', sans-serif"], "logo_text": "Enterprise Vibe Code"}`, with
+`"format_tags": {"six_stops": "carousel"}`. A single before-and-after card is
+not a carousel and shows no verbatim quote, so no existing format tag fits it:
+the skill puts it in `decisions[]` (post untagged, or add a new value to
+`format_tags.json`, `ARCHITECTURE.md` and buffer-stats in the skills repo
+first) rather than mislabel it.
+
+The `sandbox-bjj` profile below keeps the default `templates` engine.
 
 ## Example: `sandbox-bjj`
 

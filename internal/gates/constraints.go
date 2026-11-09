@@ -32,6 +32,12 @@ var constraintsJSON []byte
 // hashtags).
 type FieldConstraint struct {
 	MaxRunes int `json:"max_runes,omitempty"`
+	// MaxRunesKinds limits MaxRunes to these cell kinds (clip, full,
+	// static); empty means every kind. Facebook's 255-rune title is an
+	// OpusClip rule ("Shorten the title and put the full caption in the
+	// description"); a Buffer static has no separate title, so the cap does
+	// not apply to it.
+	MaxRunesKinds []string `json:"max_runes_kinds,omitempty"`
 	// MaxCount caps list fields (hashtags). 0 = no cap.
 	MaxCount int `json:"max_count,omitempty"`
 	// Required: the post fails if this field is empty. Catches the symmetric
@@ -64,6 +70,22 @@ func mustLoadConstraints() map[string]PlatformConstraints {
 		panic(fmt.Sprintf("gates: bad embedded constraints.json: %v", err))
 	}
 	return m
+}
+
+// capApplies reports whether the field's MaxRunes applies to a cell kind.
+func (fc FieldConstraint) capApplies(kind string) bool {
+	if len(fc.MaxRunesKinds) == 0 {
+		return true
+	}
+	if kind == "" {
+		kind = KindClip // an unkinded cell is judged as strictly as a clip
+	}
+	for _, k := range fc.MaxRunesKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // runeLen counts CHARACTERS, not bytes: platform limits are in characters and

@@ -58,6 +58,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // Options configures a Server. The zero value is usable.
@@ -707,6 +708,20 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"statusCode": 400, "message": "publishAt must be ISO 8601 UTC"})
 		return
 	}
+	// OpusClip refuses a Facebook post whose title is over 255 characters
+	// (seen live on 2026-11-08). Only the quoted sentence is the real
+	// message; the status code and envelope follow this fake's other 400s.
+	acct, _ := req["postAccountId"].(string)
+	if accountPlatform(acct) == "FACEBOOK_PAGE" {
+		title := ""
+		if pd, ok := req["postDetail"].(map[string]any); ok {
+			title, _ = pd["title"].(string)
+		}
+		if utf8.RuneCountInString(title) > FacebookTitleMax {
+			writeJSON(w, 400, map[string]any{"statusCode": 400, "message": "Shorten the title and put the full caption in the description."})
+			return
+		}
+	}
 	id := s.newID("sched_")
 	s.mu.Lock()
 	s.schedules[id] = req
@@ -734,6 +749,22 @@ var socialAccounts = []map[string]any{
 	{"postAccountId": "acc-ig", "subAccountId": "ig-sub-1", "platform": "INSTAGRAM_BUSINESS", "extUserId": "17841400000", "extUserName": "fake.ig", "extUserPictureLink": "", "extUserProfileLink": "https://instagram.com/fake.ig"},
 	{"postAccountId": "acc-li", "subAccountId": "li-sub-1", "platform": "LINKEDIN", "extUserId": "li-1", "extUserName": "Fake Person", "extUserPictureLink": "", "extUserProfileLink": "https://linkedin.com/in/fake"},
 	{"postAccountId": "acc-tt", "subAccountId": "", "platform": "TIKTOK_BUSINESS", "extUserId": "tt-1", "extUserName": "fake.tt", "extUserPictureLink": "", "extUserProfileLink": "https://tiktok.com/@fake"},
+	{"postAccountId": "acc-fb", "subAccountId": "fb-sub-1", "platform": "FACEBOOK_PAGE", "extUserId": "fb-1", "extUserName": "Fake Page", "extUserPictureLink": "", "extUserProfileLink": "https://facebook.com/fake"},
+}
+
+// FacebookTitleMax is OpusClip's Facebook title cap, mirrored by the gate's
+// constraints.json facebook.title.max_runes.
+const FacebookTitleMax = 255
+
+// accountPlatform is the platform of a postAccountId, "" when unknown.
+func accountPlatform(acct string) string {
+	for _, a := range socialAccounts {
+		if a["postAccountId"] == acct {
+			p, _ := a["platform"].(string)
+			return p
+		}
+	}
+	return ""
 }
 
 // DropSchedule removes a schedule as if OpusClip had dropped it, so tests can
