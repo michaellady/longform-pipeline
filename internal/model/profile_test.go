@@ -79,3 +79,46 @@ func TestProfileNewsletterCarouselAndStaticCTA(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileStaticsReferenceDir(t *testing.T) {
+	t.Setenv("LONGFORM_CONFIG_DIR", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(ProfilesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	designs := filepath.Join(home, "designs")
+	if err := os.MkdirAll(designs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	notDir := filepath.Join(home, "README.md")
+	if err := os.WriteFile(notDir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	load := func(ref string) (*Profile, error) {
+		t.Helper()
+		body := `{"inbox":"/tmp/in","statics":{"engine":"custom-html","formats":["six_stops"],"reference_dir":"` + ref + `"}}`
+		if err := os.WriteFile(filepath.Join(ProfilesDir(), "p.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return LoadProfile("p")
+	}
+	p, err := load("~/designs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Statics.ReferenceDir != designs {
+		t.Errorf("reference_dir = %q, want %q (home expanded)", p.Statics.ReferenceDir, designs)
+	}
+	if p, err := load(""); err != nil || p.Statics.ReferenceDir != "" {
+		t.Errorf("unset reference_dir: %v %+v", err, p)
+	}
+	for ref, want := range map[string]string{
+		"~/missing":   "statics.reference_dir",
+		"~/README.md": "is not a directory",
+	} {
+		if _, err := load(ref); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("reference_dir %s: err = %v, want %q", ref, err, want)
+		}
+	}
+}

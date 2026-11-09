@@ -36,6 +36,25 @@ longform fakeopus --addr 127.0.0.1:0 --delay 5s
 
 The e2e test never touches `~/.config/longform-pipeline`, `~/Library/Application Support/longform-pipeline`, or the network: `LONGFORM_CONFIG_DIR`, `LONGFORM_DATA_DIR`, `LONGFORM_LOG_DIR` and `HOME` all point into a temp root, and `OPUSCLIP_API_URL` points at the fake.
 
+## Setup wizard: statics checks
+
+Stage 10 of `setup.sh` checks the statics settings as it asks for them, before the
+profile is written:
+
+- `newsletter-carousel`: `statics.carousel_dir` holds `templates/render.sh` and
+  `templates/gen_illustration.py`; only `carousel` and `quote` are accepted as formats.
+- `custom-html`: each palette entry is `name=colour`; `statics.reference_dir`, when
+  given, is an existing folder (a missing `README.md` in it is a warning).
+- `cta.static_cta: newsletter-canon`: `cta.cta_script` is an executable file and
+  `copy.voice_corpus` is set (the file not existing yet is a warning).
+- `buffer.format_tags` values are `carousel`, `verbatim_quote` or blank.
+
+A check the person chooses to override ("Keep it anyway") lands in the wizard's closing
+"still to do by hand" list. The profile itself is validated by the binary on every
+`--profile` command: `longform stage --profile <p>`, which stage 12 runs, exits 65 and
+names the field (for example `statics.reference_dir: stat ...: no such file or
+directory`).
+
 ## What the e2e test asserts
 
 1. `stage --profile evc --file <fixture>`: one job under `<data>/jobs/` in state `staged` with `sources/ analysis/ review/ statics/ logs/`, one source with a sha256. A second run creates no second job.

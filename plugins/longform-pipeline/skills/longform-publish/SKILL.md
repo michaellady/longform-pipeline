@@ -279,7 +279,14 @@ illustrations; delete one PNG under `statics/<id>/illus/` to regenerate just
 that slide with a revised scene. Write `draft.json` with the statics first,
 render, then continue.
 
-**Engine `custom-html`.** You design each post. Write one self-contained HTML
+**Engine `custom-html`.** You design each post. If
+`profile.statics.reference_dir` is set, read its `README.md` (the design
+principles) and every approved design under it (each subfolder's HTML
+generator, rendered PNGs, opened with the Read tool, and captions) before
+writing any HTML, and design the new posts in that visual language: same
+layout grammar, type scale, palette use and caption shape, with this video's
+content. Depart from it only when the user asks for something new (then say so
+in `decisions[]`). Write one self-contained HTML
 file per image under `statics/<id>/html/` (inline CSS, fixed 1080x1350 body,
 colours only from `profile.brand.palette`, fonts from `profile.brand.fonts`,
 wordmark `profile.brand.logo_text`; frames from `delivery.mp4` via
