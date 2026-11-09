@@ -103,7 +103,7 @@ func validateCaps(c Cell) []Verdict {
 			out = append(out, Verdict{c.ClipID, c.Label, platform, name, "required field is empty", fh})
 			continue
 		}
-		if fc.MaxRunes > 0 {
+		if fc.MaxRunes > 0 && fc.capApplies(c.Kind) {
 			if n := runeLen(val); n > fc.MaxRunes {
 				fh := fmt.Sprintf("trim %q to <= %d chars", name, fc.MaxRunes)
 				if pc.TitleSource == "separate" && name == "title" {

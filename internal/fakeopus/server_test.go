@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"github.com/michaellady/longform-pipeline/internal/gates"
 	"io"
 	"net/http"
 	"strings"
@@ -310,5 +311,44 @@ func TestScheduleListing(t *testing.T) {
 	}
 	if resp, b := do(t, "GET", api+"/publish-schedules/"+ig, nil, auth()); resp.StatusCode != 404 || !strings.Contains(string(b), "Cannot GET") {
 		t.Fatalf("read by id: %d %s", resp.StatusCode, b)
+	}
+}
+
+// TestFacebookTitleCap: like OpusClip, the fake refuses a Facebook title over
+// 255 characters and accepts a short title with the caption in the
+// description.
+func TestFacebookTitleCap(t *testing.T) {
+	s := New(Options{})
+	api, err := s.Start("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	future := time.Now().Add(48 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	post := func(title, desc string) (int, string) {
+		body, _ := json.Marshal(map[string]any{"projectId": "P1", "clipId": "C1", "postAccountId": "acc-fb", "subAccountId": "fb-sub-1", "publishAt": future,
+			"postDetail": map[string]any{"title": title, "custom": map[string]any{"description": desc}}})
+		resp, b := do(t, "POST", api+"/publish-schedules", body, auth())
+		return resp.StatusCode, string(b)
+	}
+	caption := strings.Repeat("é", FacebookTitleMax+1)
+	if code, b := post(caption, ""); code != 400 || !strings.Contains(b, "Shorten the title and put the full caption in the description.") {
+		t.Fatalf("over-long facebook title: %d %s", code, b)
+	}
+	if code, b := post(strings.Repeat("é", FacebookTitleMax), caption); code != 201 {
+		t.Fatalf("255-rune title with the caption in the description: %d %s", code, b)
+	}
+	// Other platforms keep their own rules.
+	body, _ := json.Marshal(map[string]any{"projectId": "P1", "clipId": "C1", "postAccountId": "acc-ig", "publishAt": future, "postDetail": map[string]any{"title": caption}})
+	if resp, b := do(t, "POST", api+"/publish-schedules", body, auth()); resp.StatusCode != 201 {
+		t.Fatalf("instagram caption-as-title: %d %s", resp.StatusCode, b)
+	}
+}
+
+// The fake's Facebook cap and the gate's constraints row must agree, so a
+// cell the gate passes is never one the fake (or OpusClip) refuses.
+func TestFacebookTitleCapMatchesGate(t *testing.T) {
+	if got := gates.Constraints["facebook"].Fields["title"].MaxRunes; got != FacebookTitleMax {
+		t.Fatalf("gate facebook title cap %d != fake %d", got, FacebookTitleMax)
 	}
 }

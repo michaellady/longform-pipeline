@@ -40,6 +40,10 @@ type FullVideo struct {
 	Chapters    []Chapter   `json:"chapters"`
 	Thumbnails  []Thumbnail `json:"thumbnails"`
 	Platforms   []string    `json:"platforms"`
+	// Captions is the post text per non-YouTube platform. Title and
+	// Description are the YouTube package (chapters, links); a platform
+	// listed here gets its own caption instead. See FullVideoCell.
+	Captions map[string]string `json:"captions,omitempty"`
 }
 
 // Chapter is one YouTube chapter marker.
@@ -84,6 +88,34 @@ type Static struct {
 	Platforms []string     `json:"platforms"`
 	Caption   string       `json:"caption"`
 	Inputs    StaticInputs `json:"inputs"`
+	// VisualReview is the image-caption alignment record: an independent,
+	// image-capable reviewer inspected every final image beside this exact
+	// caption and the source passage. `longform gate statics` blocks the
+	// static when it is missing, not a PASS, or stale (caption or image bytes
+	// changed since). The caption is the same on every platform the static
+	// posts to, so one review covers all of its cells.
+	VisualReview *VisualReview `json:"visual_review,omitempty"`
+}
+
+// VisualReview binds one reviewer verdict to the exact caption and image
+// bytes it judged (PATTERNS.md "Newsletter image-caption alignment").
+type VisualReview struct {
+	Reviewer      string          `json:"reviewer"`
+	Caption       string          `json:"caption"` // exact final caption, CTA included
+	Verdict       string          `json:"verdict"` // PASS | FAIL
+	Evidence      string          `json:"evidence"`
+	SourceExcerpt string          `json:"source_excerpt,omitempty"` // the transcript passage supplied
+	Images        []ReviewedImage `json:"images"`
+	ReviewedAt    string          `json:"reviewed_at,omitempty"`
+}
+
+// ReviewedImage is one inspected image: its job-relative path, the sha256 of
+// the bytes the reviewer saw and, once hosted, the public URL whose bytes
+// must hash the same.
+type ReviewedImage struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	URL    string `json:"url,omitempty"`
 }
 
 // StaticInputs are the template fields; which ones matter depends on Format.
@@ -93,6 +125,9 @@ type StaticInputs struct {
 	TimestampMs int64   `json:"timestamp_ms,omitempty"`
 	Caption     string  `json:"caption,omitempty"` // on-image caption for still; falls back to Static.Caption
 	Slides      []Slide `json:"slides,omitempty"`
+	// Pages are the job-relative HTML files the skill designed for this
+	// static (custom-html engine), one per image, in posting order.
+	Pages []string `json:"pages,omitempty"`
 }
 
 // Slide is one carousel panel.
@@ -101,6 +136,13 @@ type Slide struct {
 	Text        string `json:"text"`
 	Sub         string `json:"sub"`
 	TimestampMs int64  `json:"timestamp_ms,omitempty"`
+	// Newsletter-carousel engine only. Fields fill the slide template's
+	// placeholders (LINE_1, KICKER, QUOTE, STAT_NUMBER, ACCENT_WORD, ...);
+	// Scene is the illustration prompt; Illustration is the job-relative
+	// PNG (default statics/<id>/illus/slide-NN.png).
+	Fields       map[string]string `json:"fields,omitempty"`
+	Scene        string            `json:"scene,omitempty"`
+	Illustration string            `json:"illustration,omitempty"`
 }
 
 // Censored is one beeped span.

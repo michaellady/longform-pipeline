@@ -54,8 +54,15 @@ Example:
 The constraints table (`internal/gates/constraints.json`) says, per platform,
 where the human-authored post text goes. On `youtube` and `pinterest`
 `title_source` is `separate`: `title` is its own capped field (100 chars) and
-the post text goes in `description`. Everywhere else the post text *is*
-`title`. Getting this wrong is the 2026-05-31 bug the gate exists for.
+the post text goes in `description`. `facebook` is `separate` too: OpusClip
+refuses a Facebook title over 255 characters ("Shorten the title and put the
+full caption in the description", seen live 2026-11-08), so a Facebook clip
+or full cell carries `title` = the short title (≤ 255) and `description` = the
+full caption (≤ 2200). The 255 cap binds `clip` and `full` cells only
+(`max_runes_kinds` in the table); a Buffer static has no separate title and
+`brief parse-decision` writes its caption into both fields. Everywhere else the
+post text *is* `title`. Getting this wrong is the 2026-05-31 bug the gate
+exists for.
 
 ## `longform slots propose`
 
@@ -103,7 +110,7 @@ Per cell, in this order:
 
 | check | field | rule |
 |---|---|---|
-| (a) caps | `title`, `description`, `hashtags` | per-platform caps from `constraints.json` (rune counts); `title` is required on every platform (a skipCurate full video ships with null title metadata, so the skill must always write one); hashtag count cap; post text + ` #tag`s within the post-text cap; hashtags well-formed |
+| (a) caps | `title`, `description`, `hashtags` | per-platform caps from `constraints.json` (rune counts; Facebook clip/full `title` ≤ 255); `title` is required on every platform (a skipCurate full video ships with null title metadata, so the skill must always write one); hashtag count cap; post text + ` #tag`s within the post-text cap; hashtags well-formed |
 | (a') account | `account_id`, `sub_account_id` | the platform is connected in the profile and `account_id` matches it (fix hint: "connect the account in OpusClip and add it to the profile"); a static's account is its Buffer channel, by exact platform key else family key (`linkedin` for `linkedin_page`); `sub_account_id` present on facebook / linkedin_page / linkedin_profile clip and full cells |
 | (b) duration | `duration_sec` | clip/full cells only: threads 300, linkedin_page/profile 600, instagram 900, tiktok 600, facebook 14400, youtube 43200, x 140 seconds; override with `profile.extra.max_duration_sec` (`{"platform": seconds}`) |
 | (c) profanity | `title`, `description`, `hashtags` | no whole word (case-insensitive) from `censor/default.json` next to the plugin binary (`../censor/default.json` from the binary's directory) or `--censor-list`, plus `profile.censor.extra` when `censor.enabled` |

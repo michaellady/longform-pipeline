@@ -29,8 +29,10 @@ Two entry points:
 |---|---|---|
 | Shorts are 30, 60, or 90 s buckets. Never OpusClip "Auto". | Auto emits >90 s clips that fail platform caps. | profile `opusclip.shorts.durations`; `longform gate validate` |
 | Per-platform cadence from `profile.cadence`, never a 6th post on a day. Roll to the next day. | Diminishing returns past the cadence; the old flat 5/day cap is retired. | `longform slots propose`, `longform gate validate` |
-| YouTube cells: `title` = `short_title` ≤ 100 chars, `description` = the long caption. Every other platform: `title` = the long caption. | YouTube hard-caps the title; 25/25 posts once shipped broken from a caption-as-title. | `longform gate validate` (exit 65 names the field) |
-| Every caption ends with `[opus:<clip_id>]` on its own last line. | Grep-able attribution that survives manifest loss. | you, checked by the gate |
+| YouTube cells: `title` = `short_title` ≤ 100 chars, `description` = the long caption. Facebook cells: `title` = `short_title` (≤ 255), `description` = the long caption. Every other platform: `title` = the long caption. | YouTube hard-caps the title; 25/25 posts once shipped broken from a caption-as-title. OpusClip refuses a Facebook title over 255 ("Shorten the title and put the full caption in the description"). | `brief parse-decision` maps Facebook cells; `longform gate validate` (exit 65 names the field) |
+| Every clip and full-video caption ends with `[opus:<clip_id>]` on its own last line. | Grep-able attribution that survives manifest loss. | you, checked by the gate |
+| With `profile.cta.static_cta == "newsletter-canon"`, every static caption on every channel ends with exactly the output of `longform brief newsletter-cta` (no `[opus:]` tag, no trailing punctuation after it). | The Comment-to-DM automation keys on that exact string and sends the newest newsletter. | `longform gate statics` |
+| No static posts without a fresh `visual_review` PASS: an independent image-capable reviewer saw every final image beside its exact caption and the transcript passage. Any later caption or image change voids it. | Image availability and branding do not prove the image fits the caption. | `longform gate statics` (and `--hosted` before Buffer) |
 | The verbatim API response for every scheduled cell goes into `manifest.json`. | `hasConflict` and future fields must survive; attribution JOINs on `scheduleId`. | `longform opus schedule` + `longform manifest append-post` |
 | Gate exit codes are read, never bypassed. Exit 65 means fix the named field and re-run. | A prompt rule is advisory; a binary in the path is a gate. | you |
 | No profanity from `censor/default.json` or `profile.censor.extra` in any title, caption, or hashtag. | Titles and thumbnails are what demonetize. | `longform gate validate` |
@@ -70,14 +72,18 @@ Profile: `~/.config/longform-pipeline/profiles/<profile>.json` (schema in
  "full_video":{"project_id":"","clip_id":"","title":"","description":"",
    "chapters":[{"at_ms":0,"title":""}],
    "thumbnails":[{"path":"","chosen":false}],
-   "platforms":[]},
+   "platforms":[],"captions":{"facebook":""}},
  "clips":[{"project_id":"","clip_id":"","score":0,"duration_sec":0,"short_title":"",
    "status":"post|held","preview_url":"",
    "cells":[{"platform":"","account_id":"","sub_account_id":"","title":"","description":"",
      "hashtags":[],"publish_at":""}]}],
- "statics":[{"id":"","format":"quote|carousel|still|frame_carousel","platforms":[],"caption":"",
+ "statics":[{"id":"","format":"quote|carousel|still|frame_carousel|<custom-html format>","platforms":[],"caption":"",
    "inputs":{"quote":"","attribution":"","timestamp_ms":0,
-     "slides":[{"kind":"hook|section|quote|stat|cta","text":"","sub":"","timestamp_ms":0}]}}],
+     "slides":[{"kind":"hook|section|quote|stat|cta","text":"","sub":"","timestamp_ms":0,
+       "fields":{},"scene":"","illustration":""}],
+     "pages":[]},
+   "visual_review":{"reviewer":"","caption":"","verdict":"PASS|FAIL","evidence":"","source_excerpt":"",
+     "images":[{"path":"","sha256":"","url":""}],"reviewed_at":""}}],
  "censored":[],
  "stabilization":{"before":"","after":""},
  "credits":{"spent":0,"to_spend":0},
@@ -88,6 +94,11 @@ Profile: `~/.config/longform-pipeline/profiles/<profile>.json` (schema in
 profile account keys (`youtube`, `instagram`, `facebook`, `linkedin_page`, ...) the
 full video goes to. `account_id` is `profile.opusclip.accounts[<platform>]`;
 `sub_account_id` is `profile.opusclip.sub_accounts[<platform>]` or `""`.
+`full_video.captions` holds the post text for non-YouTube platforms (Facebook
+always: its full-video cell gets `title` = `full_video.title`, `description` =
+`captions.facebook`). `fields`/`scene`/`illustration` are for the
+`newsletter-carousel` engine, `pages` for `custom-html`, `visual_review` for
+every static (see Phase 5b). `docs/draft-schema.md` has every field.
 
 ---
 
@@ -173,6 +184,7 @@ transcript does not make. No em dashes, no "In this video".
 | Platform | `title` | `description` |
 |---|---|---|
 | `youtube` | `short_title` (≤ 100 chars) | full caption |
+| `facebook` | `short_title` (≤ 255 chars) | full caption |
 | everything else | full caption | `""` |
 
 `hashtags[]` duplicates the hashtags in the caption so the gate can check them.
@@ -181,6 +193,10 @@ transcript does not make. No em dashes, no "In this video".
 
 - `project_id` = `clips.json.full_project_id`, `clip_id` = `clips.json.full_clip_id`.
 - `title`: ≤ 100 chars, the video's claim.
+- `captions`: for every non-YouTube full-video platform, its own post text
+  (hook, CTA per Phase 3, hashtags, `[opus:<full_clip_id>]`), never the YouTube
+  description with chapters. `captions.facebook` is required when Facebook gets
+  the full video; its title is `title`.
 - `description`: 3–6 lines summary, then both CTAs with `utm_medium=longform`
   (`utm_content=<full_clip_id>`), then chapters as `MM:SS Title` lines, then hashtags,
   then `[opus:<full_clip_id>]`.
@@ -202,9 +218,27 @@ transcript does not make. No em dashes, no "In this video".
   under 3 minutes), so it gets ordinary cells like a short. The YouTube Data API path
   (`longform yt-upload`) is only the fallback for chapters and a custom thumbnail.
 
-### Phase 5 — Statics inputs (D17)
+### Phase 5 — Statics (D17)
 
-One entry per format in `profile.statics.formats`:
+`profile.statics.engine` decides how statics are made. Every engine shares
+these rules:
+
+- `platforms` come from `profile.buffer.channels` keys.
+- Caption: with `profile.cta.static_cta == "newsletter-canon"`, run
+  `longform brief newsletter-cta --job <jobdir>` once and end **every** static
+  caption with its output, after a blank line, nothing after it. The title in
+  it is the newest newsletter's (from the voice corpus), not the video's: the
+  Comment-to-DM flow sends the newsletter. Above it: the strongest verbatim
+  quote in double quotes, or one grounded line. Otherwise follow Phase 3 for
+  that platform set. One caption per static serves all its platforms; if a
+  platform needs different text, make it a separate static.
+- Quotes are **verbatim** transcript spans. Section, hook and stat copy is
+  grounded in the transcript and checked against `profile.copy.voice_corpus`
+  (sentence rhythm, vocabulary, first-person stance); a stat is a number the
+  transcript states.
+
+**Engine `templates` (default).** One entry per format in
+`profile.statics.formats`; rendered after approval by `brief render-statics`.
 
 - `quote`: `inputs.quote` is a **verbatim** transcript sentence ≤ 260 chars,
   `attribution` = `profile.brand.display`, `timestamp_ms` of the sentence start.
@@ -214,21 +248,98 @@ One entry per format in `profile.statics.formats`:
 - `frame_carousel`: `inputs.slides[]` of 4–6 `section` entries each with a
   `timestamp_ms` and ≤ 90-char `text`.
 
-`platforms` for statics come from `profile.buffer.channels` keys. `caption` follows
-Phase 3 rules for that platform set (the comment-to-DM line is fine on Instagram).
+**Engine `newsletter-carousel`.** The carousel-newsletter system in
+`profile.statics.carousel_dir` (read its `SKILL.md` Phases 2–4 once). Formats:
+
+- `carousel`: exactly 10 slides in carousel-newsletter Phase 2 order: 1 `hook`,
+  2 `section`, 3 `quote`, 4 `stat`, 5 `quote`, 6 `section`, 7 `quote`,
+  8 `stat` or `section`, 9 `section`, 10 `cta`. Per slide write `fields` for
+  its template: hook `LINE_1` + `LINE_2` (≤ ~26 chars together), `TEASE`
+  (≤ 120); section `KICKER`, `HEADLINE_1`, `HEADLINE_ACCENT`, `BODY` (≤ 220);
+  quote `QUOTE` (verbatim, ≤ 260), `ATTRIBUTION` (`<video title> — <brand.display>`);
+  stat `STAT_NUMBER`, `STAT_UNIT`, `STAT_LABEL_1`, `STAT_LABEL_2`; cta
+  `HEADLINE_1`, `BODY`, `ACCENT_WORD` = `newsletter` (literally).
+- `quote`: one `quote` slide, an illustrated quote card.
+- `scene` on every slide: an illustration prompt that fills the frame edge to
+  edge and *does* something tied to that slide's words (carousel-newsletter
+  Phase 3 rules and examples). Never ask for text in the image.
+
+Then render (this generates the illustrations: about $0.04 each, Gemini via
+`gen_illustration.py` with the EVC banner reference; the command pauses 15 s
+between calls):
+
+```bash
+longform brief render-carousel --job <jobdir> --illustrate
+```
+
+Exit 65 lists every problem (slide order, missing field, a quote that is not a
+verbatim transcript span, quote over 260, accent word) before anything is
+generated; fix `draft.json` and re-run. A re-run reuses existing
+illustrations; delete one PNG under `statics/<id>/illus/` to regenerate just
+that slide with a revised scene. Write `draft.json` with the statics first,
+render, then continue.
+
+**Engine `custom-html`.** You design each post. Write one self-contained HTML
+file per image under `statics/<id>/html/` (inline CSS, fixed 1080x1350 body,
+colours only from `profile.brand.palette`, fonts from `profile.brand.fonts`,
+wordmark `profile.brand.logo_text`; frames from `delivery.mp4` via
+`ffmpeg -ss <sec> -i <jobdir>/delivery.mp4 -frames:v 1 statics/<id>/html/f-N.jpg`
+referenced by relative path). List them in order in `inputs.pages`. Text on
+the image follows the same grounding rules. Then:
+
+```bash
+longform brief render-html --job <jobdir>
+```
+
+Exit 65 names a missing page, a path outside the job or an unfilled
+`{{TOKEN}}`. Open the PNGs yourself and iterate on the HTML until the layout is
+clean before the independent review.
+
+### Phase 5b — Visual review (newsletter-carousel and custom-html: required before the brief)
+
+For each static, spawn **one fresh subagent** (Agent tool, `general-purpose`,
+no other context) and give it: the absolute paths of every PNG
+(`longform gate statics --job <jobdir> --list` prints them with sha256), the
+exact final caption, and the transcript passage(s) the static draws on. Ask
+it to open every PNG with its Read tool and answer JSON
+`{verdict: PASS|FAIL, evidence: "<what it saw in the images>", issues: []}`:
+does each image fit the caption and the passage, is any text in the image
+wrong, cut off, or unreadable, is any illustration off-palette or showing stray
+words, is the CTA slide's word `newsletter`. A filename, alt text or a
+text-only review is not evidence.
+
+Record its answer in the static as `visual_review`: `reviewer` (e.g. "fresh
+general-purpose subagent"), `caption` (byte-identical to `statics[].caption`),
+`verdict`, `evidence`, `source_excerpt`, `images` (`path` + `sha256` from
+`--list`), `reviewed_at`. On FAIL fix the copy, scene or HTML, re-render and
+review again (3 rounds max; then hold the static with a decision). Then:
+
+```bash
+longform gate statics --job <jobdir>
+```
+
+Exit 0, or fix what each verdict names. Any edit to a caption or an image
+after this voids that static's review: the gate reports it as stale, and you
+review again. For the `templates` engine this phase runs in the approval
+phase after `render-statics` instead.
 
 ### Phase 6 — Adversarial review (must pass)
 
 Assemble one prompt: the transcript, every cell's title and description, every static
-caption and slide text, the full-video title and description, the profile's style
-rules, and the question "Is every claim grounded in the transcript, every CTA correct
-per the profile, every YouTube title ≤ 100 chars, every caption ending in `[opus:]`,
+caption, slide fields and scene prompt, each static's `visual_review` record, the
+full-video title, description and captions, the profile's style rules, and the question "Is every claim grounded in the transcript, every CTA correct
+per the profile, every YouTube title ≤ 100 chars, every Facebook title ≤ 255 with the caption in the description, every clip caption ending in `[opus:]`, every static caption ending in the canonical newsletter CTA (when newsletter-canon), every quote verbatim,
 no clickbait, voice consistent? Answer JSON `{verdict: pass|fail, findings: []}`."
 
 ```bash
 AR=/Users/mikelady/dev/claude-social-media-skills/_shared/adversarial-review/adversarial-review
 if [ -x "$AR" ]; then printf '%s' "$PROMPT" | "$AR" --quiet; fi
 ```
+
+For quote findings, check the claim yourself before editing: if the quote is a
+byte-identical substring of the transcript text, it is verbatim (reviewers
+hallucinate apostrophe mismatches). Any copy fix on a static re-runs its
+render and Phase 5b.
 
 If the binary is absent, spawn one fresh subagent (Agent tool, `general-purpose`) with
 the same prompt and no other context. Fix every `fail` finding and re-run until the
@@ -256,6 +367,10 @@ three rounds, put the unresolved finding in `decisions[]` and hold the affected 
    pick when unsure, a platform the caps make doubtful, a held clip you think deserves a
    slot. Each has an `id` (`d1`, `d2`, ...), 2–4 `options`, and a `default`.
 6. Write `<jobdir>/review/draft.json`. Validate it is parseable JSON (`jq . file`).
+   For the `newsletter-carousel` and `custom-html` engines run
+   `longform gate statics --job <jobdir>` last: exit 0, or a static that cannot
+   pass is removed from `statics[]` and named in a decision. Never render the
+   brief over a failing static.
 7. `longform brief render --job <jobdir>` (writes `review/brief.md`, state `drafted`).
 8. `longform notify --job <jobdir> --event drafted --message "Brief ready: <n> clips to post, <m> held, full video <title>"`.
 9. **STOP.** Print the brief path and the approval command. Do not schedule anything.
@@ -283,9 +398,12 @@ Steps, in order, reading every exit code:
 1. `longform brief parse-decision --job <jobdir> "<grammar>"` writes
    `review/decision.json` and `review/schedule.json` (the final cells), state `approved`.
    Exit 64 is a grammar error: show the table above and stop.
-2. `longform brief render-statics --job <jobdir>` renders PNGs (and the LinkedIn PDF
-   and TikTok photo set for `frame_carousel`) into `statics/` from the profile's
-   templates.
+2. Engine `templates` only: `longform brief render-statics --job <jobdir>`
+   renders PNGs (and the LinkedIn PDF and TikTok photo set for
+   `frame_carousel`) into `statics/` from the profile's templates, then run
+   Phase 5b (visual review) for every static and record `visual_review` in
+   `draft.json`. The other engines rendered and reviewed in the draft phase;
+   `render-statics` is a no-op for them.
 3. `longform gate validate --profile <p> --cells <jobdir>/review/schedule.json`
    - exit 0: continue.
    - exit 65: stdout is a verdict JSON naming the cell, field, and limit. Fix exactly
@@ -314,19 +432,63 @@ Steps, in order, reading every exit code:
    only adds the failed attempts' lines, which give seal's verdict the API error.
    Re-running the approval phase from this step is safe: every cell OpusClip accepted is
    already in `manifest.json` and is skipped.
-6. Statics through Buffer: for every static in `schedule.json`, one
-   `mcp__buffer__create_post` per platform in its `platforms`, `mode: addToQueue`,
-   `channelId` from `profile.buffer.channels[platform]`, media from `statics/<id>/`,
-   `tags: [profile.buffer.tags["video_<format>"]]`. **Read the live
-   `mcp__buffer__create_post` tool schema before the first call** and build the
-   `assets` from it: the binary's `buffer-post-prep` only ever emits
-   `{"image": {...}}` assets, the video asset shape is unconfirmed, so never assume
-   `{type: "video"}`. Statics are images and PDFs; if a format needs a video asset,
-   stop and surface it as a decision. Record each response via
-   `longform manifest append-post --job <jobdir>`, one JSON line per post:
-   `{"cell": <the static's cell from schedule.json>, "response": <the create_post reply verbatim>, "transport": "buffer", "post_id": "<the Buffer post id from that reply>"}`.
-   `post_id` is required: the binary does not know Buffer's reply shape, so you name
-   the id; without it the seal step reports the cell as missing.
+6. Statics through Buffer. In this order, for the statics in `schedule.json`:
+   1. **Gate.** `longform gate statics --job <jobdir>`: exit 0 or stop. It
+      checks each scheduled caption against its `visual_review`, the image
+      digests, the Instagram aspect range (0.8..1.91) and the canonical CTA. A
+      caption you shortened for `gate validate` voids the review: review again.
+   2. **Host.** Buffer needs public URLs. Use the newsletter convention:
+      ```bash
+      SK=<skills repo: the parent of profile.statics.carousel_dir, else ~/dev/claude-social-media-skills>
+      D=$SK/generated/<YYYY-MM-DD>-longform-<slug>
+      mkdir -p "$D/<id>" && cp <jobdir>/statics/<id>/slide-*.png "$D/<id>/"   # once per static
+      git -C "$SK" add generated/ && git -C "$SK" commit -m "Add longform image assets: <slug>" && git -C "$SK" push
+      SHA=$(git -C "$SK" rev-parse HEAD)
+      ```
+      URLs are `https://raw.githubusercontent.com/<owner>/<repo>/$SHA/generated/<YYYY-MM-DD>-longform-<slug>/<id>/slide-NN.png`,
+      pinned to the commit SHA, never `main`. If the commit is refused because
+      `_shared/adversarial-review` drifts from mike-skills, run
+      `_shared/adversarial-review/sync.sh --apply`, commit that alone, then
+      commit the images. Never `--no-verify`. Write each URL into
+      `visual_review.images[].url` in `draft.json`, then
+      `longform gate statics --job <jobdir> --hosted`: it downloads every URL
+      and refuses bytes that differ from the reviewed file. Exit 0 or stop.
+   3. **Overlap.** `mcp__buffer__list_posts` for each target channel (queued
+      and the last 7 days sent), piped to
+      `$SK/_shared/buffer-queue-check/buffer-queue-check --keywords "<distinctive 4-8 word phrases from the caption>,<newsletter title>"`.
+      A hit is surfaced to the user before posting, not silently posted.
+   4. **Build args.** Always with `buffer-post-prep`, never by hand:
+      ```bash
+      $SK/_shared/buffer-post-prep/buffer-post-prep --channel-id <profile.buffer.channels[platform]> \
+        --service <instagram|facebook|linkedin|threads> --text "<exact reviewed caption>" \
+        --format-tag <profile.buffer.format_tags[format]> --image-url "<slide 1 URL>" --image-alt "<title>"
+      ```
+      It takes the tag id from `_shared/buffer-post-prep/tag-ids.local.json`
+      (`carousel` -> `format:carousel`, `verbatim_quote` ->
+      `format:verbatim-quote`) so buffer-stats measures these posts with the
+      newsletter's. Exit 75 = dead channel, skip it and say so; 64/65 = fix
+      the input. For a multi-image post append every further slide in the same
+      asset shape, in order:
+      `jq --argjson urls '["<url2>",...]' --arg alt "<title>" '.assets += [$urls[] | {image: {url: ., metadata: {altText: $alt}}}]'`.
+      Without `format_tags` in the profile, use `profile.buffer.tags["video_<format>"]`
+      as `tagIds`. **Read the live `mcp__buffer__create_post` schema before the
+      first call**; statics are images only, never assume a video asset shape.
+   5. **Post.** One `mcp__buffer__create_post` per static per platform with the
+      prepared args verbatim (`mode: addToQueue`). Handle timeouts, image-fetch
+      failures and 429s as PATTERNS.md "Buffer create_post" says (retry a
+      timeout once with the same payload; stop on 429). If the Buffer MCP
+      exists only in the CLI config, drive it headlessly:
+      `env -u CLAUDE_CONFIG_DIR claude -p "Call mcp__buffer__create_post with exactly these arguments: <json>" --allowedTools mcp__buffer__create_post,mcp__buffer__get_post,mcp__buffer__list_posts`,
+      passing the args verbatim and reading the returned post.
+   6. **Read back.** `mcp__buffer__get_post` for every returned id: compare
+      text (exact), channel, every asset URL in order, tag ids and status with
+      what you sent. A mismatch is a failure for that cell. Then
+      `mcp__buffer__list_posts` with `status: [error]` for the channels: any of
+      today's posts there is a failure.
+   7. **Record.** For each post, one line to
+      `longform manifest append-post --job <jobdir>`:
+      `{"cell": <the static's cell from schedule.json>, "response": <the create_post reply verbatim>, "transport": "buffer", "post_id": "<the Buffer post id>"}`.
+      `post_id` is required: without it the seal reports the cell missing.
 7. Full video to YouTube: the native OpusClip cell (already scheduled in step 5 as an
    ordinary clip) is the default. Only if `profile.extra.youtube_native_chapters` is
    `false` (set by the ticket 0 probe: the native post cannot carry chapters or a custom
@@ -380,8 +542,17 @@ held count, anything the gate rewrote.
   misconfigured project and the gate will reject them.
 - **OpusClip MCP absent**: every call has a `longform opus ...` twin; prefer the binary
   in headless mode regardless.
-- **Buffer tag id missing for a format**: skip that static, add a decision pointing at
+- **Buffer tag id missing for a format**: with `buffer.format_tags`,
+  `buffer-post-prep` warns and emits args without `tagIds`; do not post
+  untagged silently: hold the static and add a decision. Without
+  `format_tags`, skip that static and add a decision pointing at
   `/longform-pipeline:longform-setup` stage 6.
+- **A custom-html format with no fitting format tag** (a single card that is
+  neither a carousel nor a verbatim quote): never invent a tag value; add a
+  decision (post untagged, or add the value to the skills repo's
+  `format_tags.json` first).
+- **Newest newsletter changed between draft and approval**: `gate statics`
+  reports the CTA mismatch; update the captions, review again, post.
 - **`hold <platform>` with statics**: statics on that platform are dropped too.
 - **Slot collision reported by `slots propose`**: it has already rolled to the next
   free slot; just copy its output.

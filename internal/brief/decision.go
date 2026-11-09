@@ -340,7 +340,8 @@ func DeriveSchedule(job *model.Job, prof *model.Profile, d *Draft, rec *Decision
 			acct = prof.OpusClip.Accounts[p]
 			sub = prof.OpusClip.SubAccounts[p]
 		}
-		sch.Cells = append(sch.Cells, ScheduleCell{Kind: "full", ClipID: d.FullVideo.ClipID, ProjectID: d.FullVideo.ProjectID, Platform: p, AccountID: acct, SubAccountID: sub, Title: d.FullVideo.Title, Description: d.FullVideo.Description, Hashtags: []string{}, DurationSec: fullDur, PublishAt: fullAt, Label: "full video"})
+		title, desc := FullVideoFields(d.FullVideo, p)
+		sch.Cells = append(sch.Cells, ScheduleCell{Kind: "full", ClipID: d.FullVideo.ClipID, ProjectID: d.FullVideo.ProjectID, Platform: p, AccountID: acct, SubAccountID: sub, Title: title, Description: desc, Hashtags: []string{}, DurationSec: fullDur, PublishAt: fullAt, Label: "full video"})
 	}
 
 	for row0, idx := range d.OrderedClips() {
@@ -357,7 +358,8 @@ func DeriveSchedule(job *model.Job, prof *model.Profile, d *Draft, rec *Decision
 			if tags == nil {
 				tags = []string{}
 			}
-			sch.Cells = append(sch.Cells, ScheduleCell{Kind: "clip", ClipID: c.ClipID, ProjectID: c.ProjectID, Platform: cell.Platform, AccountID: cell.AccountID, SubAccountID: cell.SubAccountID, Title: cell.Title, Description: cell.Description, Hashtags: tags, DurationSec: c.DurationSec, PublishAt: cell.PublishAt, Label: fmt.Sprintf("clip %d: %s", row, c.ShortTitle)})
+			title, desc := ClipCellFields(c, cell)
+			sch.Cells = append(sch.Cells, ScheduleCell{Kind: "clip", ClipID: c.ClipID, ProjectID: c.ProjectID, Platform: cell.Platform, AccountID: cell.AccountID, SubAccountID: cell.SubAccountID, Title: title, Description: desc, Hashtags: tags, DurationSec: c.DurationSec, PublishAt: cell.PublishAt, Label: fmt.Sprintf("clip %d: %s", row, c.ShortTitle)})
 		}
 	}
 
@@ -374,6 +376,51 @@ func DeriveSchedule(job *model.Job, prof *model.Profile, d *Draft, rec *Decision
 		}
 	}
 	return sch
+}
+
+// ClipCellFields maps a clip cell to the title and description OpusClip
+// receives. Facebook takes a separate title (OpusClip refuses one over 255
+// characters: "Shorten the title and put the full caption in the
+// description"), so a Facebook cell carries title = the clip's short_title
+// and description = the full caption. The caption is the cell's description
+// when the skill wrote one, else its title (the older caption-as-title
+// draft). Every other platform passes through unchanged.
+func ClipCellFields(c Clip, cell Cell) (title, description string) {
+	if !strings.EqualFold(cell.Platform, "facebook") {
+		return cell.Title, cell.Description
+	}
+	caption := cell.Description
+	if strings.TrimSpace(caption) == "" {
+		caption = cell.Title
+	}
+	title = c.ShortTitle
+	if strings.TrimSpace(title) == "" && cell.Description != "" {
+		title = cell.Title
+	}
+	return title, caption
+}
+
+// FullVideoFields maps the full-video package to one platform's title and
+// description. YouTube gets the package as written (short title, the long
+// description with chapters). Facebook gets the short title and its own
+// caption from full_video.captions, falling back to the description, never
+// the description as title. Any other platform posts its own caption as the
+// post text when full_video.captions has one, else the package as before.
+func FullVideoFields(f FullVideo, platform string) (title, description string) {
+	caption := f.Captions[platform]
+	switch strings.ToLower(platform) {
+	case "youtube":
+		return f.Title, f.Description
+	case "facebook":
+		if strings.TrimSpace(caption) == "" {
+			caption = f.Description
+		}
+		return f.Title, caption
+	}
+	if strings.TrimSpace(caption) != "" {
+		return caption, ""
+	}
+	return f.Title, f.Description
 }
 
 // nextFirstSlot is the next occurrence of the profile's first local slot

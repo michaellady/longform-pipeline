@@ -442,3 +442,30 @@ func TestMain_Exit65VerdictShapeAndExit0(t *testing.T) {
 		t.Errorf("missing flags exit %d, want 64", code)
 	}
 }
+
+// OpusClip refuses a Facebook title over 255 characters ("Shorten the title
+// and put the full caption in the description"). The cap binds clip and full
+// cells; a Buffer static has no separate title, so its caption-as-title only
+// meets the 2200-rune post-text cap.
+func TestCaps_FacebookTitle255(t *testing.T) {
+	long := strings.Repeat("c", 256)
+	for _, kind := range []string{KindClip, KindFull, ""} {
+		vs := validateCaps(Cell{Kind: kind, Platform: "facebook", Title: long, Description: long})
+		if !hasVerdict(vs, "facebook", "title", "exceeds facebook cap 255") {
+			t.Errorf("kind %q: expected the 255 title verdict, got %+v", kind, vs)
+		}
+		if !strings.Contains(vs[0].FixHint, "separate") {
+			t.Errorf("kind %q: fix hint should ask for a separate title: %q", kind, vs[0].FixHint)
+		}
+	}
+	if vs := validateCaps(Cell{Kind: KindClip, Platform: "facebook", Title: strings.Repeat("c", 255), Description: long}); len(vs) != 0 {
+		t.Errorf("a 255-rune title passes, got %+v", vs)
+	}
+	if vs := validateCaps(Cell{Kind: KindStatic, Platform: "facebook", Title: long, Description: long}); len(vs) != 0 {
+		t.Errorf("a static caption over 255 runes passes, got %+v", vs)
+	}
+	huge := strings.Repeat("c", 2201)
+	if vs := validateCaps(Cell{Kind: KindClip, Platform: "facebook", Title: "short", Description: huge}); !hasVerdict(vs, "facebook", "description", "exceeds facebook cap 2200") {
+		t.Errorf("a caption over 2200 runes fails, got %+v", vs)
+	}
+}
