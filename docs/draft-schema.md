@@ -77,7 +77,7 @@ profile's timezone.
 | `full_video.project_id` / `clip_id` | The `skipCurate` OpusClip project and its single clip. |
 | `full_video.chapters[].at_ms` | Chapter start; rendered as `mm:ss`. |
 | `full_video.thumbnails[]` | Candidates in display order; `swap thumbnail <n>` picks by 1-based position. Exactly one `chosen`. |
-| `full_video.platforms` | Surfaces the full video posts to. Account ids come from the profile (`opusclip.accounts`, `opusclip.sub_accounts`). |
+| `full_video.platforms` | Surfaces the full video posts to. Account ids come from the profile (`opusclip.accounts`, `opusclip.sub_accounts`). `spotify` (only with a profile `spotify` block) adds the Spotify video-podcast episode: its cell takes `title` and episode notes derived from `description` (`docs/cells-schema.md`), and the publish skill uploads it in the browser. |
 | `full_video.captions` | Optional post text per non-YouTube platform. `title`/`description` are the YouTube package. A Facebook full cell gets `title` = `full_video.title` and `description` = `captions.facebook` (else `description`); another platform listed here posts its caption as `title`. |
 | `clips[].cells[]` on `facebook` | Write `title` = `short_title`, `description` = the full caption. parse-decision enforces it either way: a Facebook cell always leaves with `title` = the clip's `short_title` and `description` = the caption (the cell's `description`, else its `title`). |
 | `clips[].status` | `post` (fills a cadence slot) or `held` (backlog). Empty means `post`. Anything else is rejected. |

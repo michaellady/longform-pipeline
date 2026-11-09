@@ -8,5 +8,6 @@
   { "label": "THREADS mikelady", "platform": "threads" },
   { "label": "X mikelady", "platform": "x" },
   { "label": "BLUESKY mikelady", "platform": "bluesky" },
-  { "label": "PINTEREST mikelady", "platform": "pinterest" }
+  { "label": "PINTEREST mikelady", "platform": "pinterest" },
+  { "label": "SPOTIFY Enterprise Vibe Code", "platform": "spotify" }
 ]

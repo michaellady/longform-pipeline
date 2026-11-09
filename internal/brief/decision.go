@@ -11,7 +11,11 @@ import (
 	"unicode"
 
 	"github.com/michaellady/longform-pipeline/internal/model"
+	"github.com/michaellady/longform-pipeline/internal/spotify"
 )
+
+// SpotifyLabel is the label of the full video's Spotify episode cell.
+const SpotifyLabel = "spotify full episode"
 
 // DecisionFile and ScheduleFile are the job-relative outputs of parse-decision.
 const (
@@ -333,6 +337,19 @@ func DeriveSchedule(job *model.Job, prof *model.Profile, d *Draft, rec *Decision
 	fullAt := nextFirstSlot(prof, now)
 	for _, p := range d.FullVideo.Platforms {
 		if held(p) {
+			continue
+		}
+		if strings.EqualFold(p, model.PlatformSpotify) {
+			// The Spotify episode: account = the show id, title = the full
+			// video's title, description = the episode notes (the YouTube
+			// description with utm_source swapped and tags stripped). The
+			// skill uploads it in the browser; opus schedule skips it.
+			acct := ""
+			if prof.SpotifyEnabled() {
+				acct = prof.Spotify.ShowID
+			}
+			notes := spotify.Notes(d.FullVideo.Description, prof.SpotifyUTMSource())
+			sch.Cells = append(sch.Cells, ScheduleCell{Kind: "full", ClipID: d.FullVideo.ClipID, ProjectID: d.FullVideo.ProjectID, Platform: model.PlatformSpotify, AccountID: acct, Title: d.FullVideo.Title, Description: notes, Hashtags: []string{}, DurationSec: fullDur, PublishAt: fullAt, Label: SpotifyLabel})
 			continue
 		}
 		acct, sub := "", ""

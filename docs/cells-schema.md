@@ -15,8 +15,8 @@ A JSON array. Every element:
 | `kind` | `"clip"` \| `"full"` \| `"static"` | OpusClip short, the full video, or a Buffer static post |
 | `clip_id` | string | OpusClip clip id (clips and full), or the static's id |
 | `project_id` | string | OpusClip project the clip belongs to |
-| `platform` | string | one of `youtube`, `instagram`, `facebook`, `linkedin_page`, `linkedin_profile`, `tiktok`, `threads`, `x`, `bluesky`, `pinterest` |
-| `account_id` | string | OpusClip `postAccountId` (from `profile.opusclip.accounts`) or Buffer channel id |
+| `platform` | string | one of `youtube`, `instagram`, `facebook`, `linkedin_page`, `linkedin_profile`, `tiktok`, `threads`, `x`, `bluesky`, `pinterest`, `spotify` (full cells only) |
+| `account_id` | string | OpusClip `postAccountId` (from `profile.opusclip.accounts`), Buffer channel id, or the Spotify show id (`profile.spotify.show_id`) |
 | `sub_account_id` | string | OpusClip sub-account (page) id when the platform needs one |
 | `title` | string | the *exact* title arg the schedule call will send |
 | `description` | string | the *exact* description/caption arg |
@@ -28,7 +28,7 @@ A JSON array. Every element:
 
 `account_id` must equal the profile's account for the platform and transport:
 `opusclip.accounts[platform]` for clips and the full video, `buffer.channels[platform]`
-for statics. Facebook and LinkedIn share one OpusClip `postAccountId` across
+for statics, `spotify.show_id` for the full video's `spotify` cell. Facebook and LinkedIn share one OpusClip `postAccountId` across
 pages and profiles (three Facebook pages; LinkedIn org page plus person
 profile), so clip and full cells on `facebook`, `linkedin_page` and
 `linkedin_profile` must also carry `sub_account_id`, and cadence is counted per
@@ -63,6 +63,20 @@ full caption (≤ 2200). The 255 cap binds `clip` and `full` cells only
 `brief parse-decision` writes its caption into both fields. Everywhere else the
 post text *is* `title`. Getting this wrong is the 2026-05-31 bug the gate
 exists for.
+
+## The Spotify episode cell
+
+When the profile has a `spotify` block and the draft lists `spotify` in
+`full_video.platforms`, `brief parse-decision` writes one `full` cell with
+`platform: "spotify"`, `account_id` = `spotify.show_id`, `title` = the full
+video's title (≤ 200), `description` = the episode notes (the YouTube
+description with `utm_source` swapped, the `[opus:]` tag and hashtag-only lines
+removed; ≤ 4000, required) and `label: "spotify full episode"`. Slots place it
+at the full video's slot (cadence `spotify` defaults to 1 a day). The gate
+checks it like any full cell, with Spotify's limits and a 12-hour duration
+cap; a clip or static cell on `spotify` fails the account check. `opus
+schedule` skips it: the skill uploads it in the Spotify for Creators wizard
+(`longform spotify prepare`) and records it with `transport: "spotify"`.
 
 ## `longform slots propose`
 
@@ -112,9 +126,9 @@ Per cell, in this order:
 |---|---|---|
 | (a) caps | `title`, `description`, `hashtags` | per-platform caps from `constraints.json` (rune counts; Facebook clip/full `title` ≤ 255); `title` is required on every platform (a skipCurate full video ships with null title metadata, so the skill must always write one); hashtag count cap; post text + ` #tag`s within the post-text cap; hashtags well-formed |
 | (a') account | `account_id`, `sub_account_id` | the platform is connected in the profile and `account_id` matches it (fix hint: "connect the account in OpusClip and add it to the profile"); a static's account is its Buffer channel, by exact platform key else family key (`linkedin` for `linkedin_page`); `sub_account_id` present on facebook / linkedin_page / linkedin_profile clip and full cells |
-| (b) duration | `duration_sec` | clip/full cells only: threads 300, linkedin_page/profile 600, instagram 900, tiktok 600, facebook 14400, youtube 43200, x 140 seconds; override with `profile.extra.max_duration_sec` (`{"platform": seconds}`) |
+| (b) duration | `duration_sec` | clip/full cells only: threads 300, linkedin_page/profile 600, instagram 900, tiktok 600, facebook 14400, youtube 43200, spotify 43200, x 140 seconds; override with `profile.extra.max_duration_sec` (`{"platform": seconds}`) |
 | (c) profanity | `title`, `description`, `hashtags` | no whole word (case-insensitive) from `censor/default.json` next to the plugin binary (`../censor/default.json` from the binary's directory) or `--censor-list`, plus `profile.censor.extra` when `censor.enabled` |
-| (d) cadence | `publish_at` | cells plus `--existing` never exceed `cadence[platform]` per `(platform, sub_account_id)` on any local day (clip and full cells only) |
+| (d) cadence | `publish_at` | cells plus `--existing` never exceed `cadence[platform]` per `(platform, sub_account_id)` on any local day (clip and full cells only; `spotify` defaults to 1 without a `cadence.spotify` entry) |
 | (e) timing | `publish_at` | present, RFC3339, and in the future for every non-held clip and full cell; a static may have none (it goes into the Buffer queue), and one it carries is checked the same way |
 
 Exit `0` when every cell passes (nothing on stdout). Exit `65` with one JSON

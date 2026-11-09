@@ -19,6 +19,7 @@ var DefaultMaxDurationSec = map[string]float64{
 	"facebook":         14400,
 	"youtube":          43200,
 	"x":                140,
+	"spotify":          43200, // 12 h, Spotify for Creators' video limit
 }
 
 // MaxDurations returns the default table overlaid with
@@ -61,11 +62,18 @@ func toFloat(v any) (float64, bool) {
 }
 
 // AccountFor is the profile's account id for a cell's transport: OpusClip's
-// postAccountId for clips and the full video, the Buffer channel id for
-// statics (model.Profile.BufferChannel: exact key, else family). Empty means the platform is not connected (probe: OpusClip had no
+// postAccountId for clips and the full video, the Spotify show id for the
+// full video's spotify cell (no other kind may target spotify), the Buffer
+// channel id for statics (model.Profile.BufferChannel: exact key, else family). Empty means the platform is not connected (probe: OpusClip had no
 // TikTok or X account), so nothing may be placed or fired there.
 func AccountFor(p *model.Profile, platform, kind string) string {
 	if p == nil {
+		return ""
+	}
+	if platform == PlatformSpotify {
+		if kind == KindFull && p.SpotifyEnabled() {
+			return p.Spotify.ShowID
+		}
 		return ""
 	}
 	if kind == KindStatic {
@@ -92,13 +100,18 @@ func CadenceKey(c Cell) string {
 
 // CadenceFor resolves the daily cadence (D12) for a platform: the exact key,
 // else the family key before the first underscore (linkedin_page ->
-// linkedin), else 0 meaning "never post here".
+// linkedin), else 0 meaning "never post here". Spotify takes one episode
+// a day unless cadence.spotify says otherwise (it carries only the full
+// video, so it never needs a cadence entry of its own).
 func CadenceFor(p *model.Profile, platform string) int {
-	if p == nil || p.Cadence == nil {
+	if p == nil {
 		return 0
 	}
 	if v, ok := p.Cadence[platform]; ok {
 		return v
+	}
+	if platform == PlatformSpotify {
+		return 1
 	}
 	for i := 0; i < len(platform); i++ {
 		if platform[i] == '_' {

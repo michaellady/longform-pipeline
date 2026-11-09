@@ -36,8 +36,8 @@ type SealResult struct {
 }
 
 // Seal checks that every approved cell in review/schedule.json has a
-// recorded post in manifest.json (an OpusClip scheduleId, or the Buffer post
-// id a static's line named), records the clips left in the backlog as held,
+// recorded post in manifest.json (an OpusClip scheduleId, the Buffer post
+// id a static's line named, or the episode id of a transport "spotify" line), records the clips left in the backlog as held,
 // and advances approved -> scheduled. Idempotent: a job already scheduled or
 // later is reported, not changed.
 func Seal(j *model.Job, opts SealOptions) (*SealResult, error) {
@@ -131,7 +131,9 @@ func matchCells(cells []gates.Cell, m *manifest.Manifest) (need, matched int, mi
 		default:
 			v.Reason = "no post recorded in manifest.json"
 		}
-		if c.Kind == gates.KindStatic {
+		if gates.IsSpotify(c) {
+			v.FixHint = `upload the episode with the Spotify for Creators wizard (longform spotify prepare, then the publish skill's Spotify episode step), then append {"cell":<cell>,"transport":"spotify","post_id":"<episode id from /pod/show/<show_id>/episode/<episode_id>/wizard>","response":<what the wizard showed>} with longform manifest append-post`
+		} else if c.Kind == gates.KindStatic {
 			v.FixHint = `post it through Buffer, then append {"cell":<cell>,"response":<Buffer reply>,"transport":"buffer","post_id":"<Buffer post id>"} with longform manifest append-post`
 		} else {
 			v.FixHint = "schedule this cell with longform opus schedule and pipe its line into longform manifest append-post"

@@ -504,3 +504,32 @@ func TestMonitorFlagsOverduePending(t *testing.T) {
 		}
 	}
 }
+
+// A spotify cell is satisfied only by a transport "spotify" record; an
+// OpusClip-looking record for the same clip and platform does not count.
+func TestSealSpotifyCellNeedsSpotifyTransport(t *testing.T) {
+	f := newFixture(t, t0.Add(24*time.Hour))
+	sp := gates.Cell{Kind: "full", ClipID: "FULL1", ProjectID: "PFULL", Platform: "spotify", AccountID: "FakeShow1", Title: "Full", Description: "notes", PublishAt: f.cells[0].PublishAt, Label: "spotify full episode"}
+	f.cells = append(f.cells, sp)
+	writeJSON(t, f.job.Path("review/schedule.json"), map[string]any{"schema_version": "1", "job_id": f.job.ID, "cells": f.cells})
+	f.appendLines(t,
+		opusLine(f.cells[0], "sched-full"),
+		opusLine(f.cells[1], "sched-A-yt"),
+		opusLine(f.cells[2], "sched-A-ig"),
+		bufferLine(f.cells[3], "buf-1"),
+		opusLine(sp, "not-a-spotify-record"),
+	)
+	res, err := Seal(f.job, SealOptions{Now: t0})
+	if !errors.Is(err, ErrMissing) || len(res.Missing) != 1 {
+		t.Fatalf("seal without a spotify record: %v %+v", err, res)
+	}
+	v := res.Missing[0]
+	if v.Platform != "spotify" || !strings.Contains(v.FixHint, "Spotify for Creators") || !strings.Contains(v.FixHint, `"transport":"spotify"`) {
+		t.Errorf("spotify verdict = %+v", v)
+	}
+	f.appendLines(t, manifest.ScheduleLine{Cell: sp, Response: json.RawMessage(`{"status":"Scheduled"}`), Transport: manifest.TransportSpotify, PostID: "FakeEpisode1"})
+	res, err = Seal(reload(t, f.job), SealOptions{Now: t0})
+	if err != nil || !res.Advanced || res.Posts != 5 {
+		t.Fatalf("seal with the spotify record: %v %+v", err, res)
+	}
+}

@@ -16,6 +16,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/michaellady/longform-pipeline/internal/model"
 )
 
 // Cell kinds and statuses. See docs/cells-schema.md.
@@ -32,8 +34,17 @@ const (
 // closed in the gate.
 var Platforms = []string{
 	"youtube", "instagram", "facebook", "linkedin_page", "linkedin_profile",
-	"tiktok", "threads", "x", "bluesky", "pinterest",
+	"tiktok", "threads", "x", "bluesky", "pinterest", PlatformSpotify,
 }
+
+// PlatformSpotify is the full video's Spotify for Creators episode. Its
+// account is the profile's spotify.show_id, only full cells may target it,
+// and `opus schedule` never sends it: the publish skill uploads it in the
+// browser and records it with transport "spotify".
+const PlatformSpotify = model.PlatformSpotify
+
+// IsSpotify reports whether a cell is a Spotify episode.
+func IsSpotify(c Cell) bool { return PlatformOf(c) == PlatformSpotify }
 
 // Cell is one (asset × platform) publish the pipeline is about to fire. The
 // same JSON array flows through slots → gate → opus schedule unchanged except

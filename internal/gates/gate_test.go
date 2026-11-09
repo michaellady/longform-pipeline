@@ -469,3 +469,53 @@ func TestCaps_FacebookTitle255(t *testing.T) {
 		t.Errorf("a caption over 2200 runes fails, got %+v", vs)
 	}
 }
+
+func TestSpotify_FullOnlyLimitsAndCadence(t *testing.T) {
+	p := testProfile()
+	p.Spotify = &model.SpotifyConfig{ShowID: "FakeShow1"}
+	now := time.Date(2026, 11, 9, 17, 0, 0, 0, time.UTC)
+	ok := Cell{Kind: KindFull, ClipID: "full-1", Platform: "spotify", AccountID: "FakeShow1", Title: "Episode", Description: "Notes", DurationSec: 3600, PublishAt: "2026-11-10T17:00:00Z", Hashtags: []string{}}
+	if vs, err := Validate(p, []Cell{ok}, nil, Options{Now: now}); err != nil || len(vs) != 0 {
+		t.Fatalf("valid spotify cell (no cadence entry, no OpusClip account): %v %+v", err, vs)
+	}
+
+	long := ok
+	long.Title = strings.Repeat("t", 201)
+	long.Description = strings.Repeat("d", 4001)
+	vs, _ := Validate(p, []Cell{long}, nil, Options{Now: now})
+	if !hasVerdict(vs, "spotify", "title", "cap 200") || !hasVerdict(vs, "spotify", "description", "cap 4000") {
+		t.Errorf("over-limit spotify: %+v", vs)
+	}
+
+	empty := ok
+	empty.Description = ""
+	if vs, _ := Validate(p, []Cell{empty}, nil, Options{Now: now}); !hasVerdict(vs, "spotify", "description", "required") {
+		t.Errorf("empty notes must fail: %+v", vs)
+	}
+
+	unslotted := ok
+	unslotted.PublishAt = ""
+	if vs, _ := Validate(p, []Cell{unslotted}, nil, Options{Now: now}); !hasVerdict(vs, "spotify", "publish_at", "empty") {
+		t.Errorf("spotify needs publish_at: %+v", vs)
+	}
+	unslotted.Status = StatusHeld
+	if vs, _ := Validate(p, []Cell{unslotted}, nil, Options{Now: now}); len(vs) != 0 {
+		t.Errorf("parked spotify needs no publish_at: %+v", vs)
+	}
+
+	clip := ok
+	clip.Kind = KindClip
+	if vs, _ := Validate(p, []Cell{clip}, nil, Options{Now: now}); !hasVerdict(vs, "spotify", "account_id", "no account for spotify clip") {
+		t.Errorf("a clip may not target spotify: %+v", vs)
+	}
+
+	two := ok
+	two.ClipID = "full-2"
+	if vs, _ := Validate(p, []Cell{ok, two}, nil, Options{Now: now}); !hasVerdict(vs, "spotify", "publish_at", "exceed cadence 1") {
+		t.Errorf("spotify defaults to one episode a day: %+v", vs)
+	}
+
+	if AccountFor(p, "spotify", KindFull) != "FakeShow1" || AccountFor(p, "spotify", KindStatic) != "" || AccountFor(testProfile(), "spotify", KindFull) != "" {
+		t.Error("AccountFor spotify")
+	}
+}

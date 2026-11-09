@@ -24,7 +24,9 @@ func (p ScheduledPost) PostPlatform() string {
 // error, in cell order. Each post satisfies at most one cell, so a double
 // append never hides a missing cell. This is the one identity rule:
 // `manifest seal` checks it and `opus schedule --job` skips by it. The
-// returned slice is parallel to cells; Post points into m.
+// returned slice is parallel to cells; Post points into m. A spotify cell
+// is satisfied only by a transport "spotify" record: nothing else can post
+// there.
 func (m *Manifest) MatchCells(cells []gates.Cell) []CellMatch {
 	type ref struct{ clip, post int }
 	used := map[ref]bool{}
@@ -43,6 +45,9 @@ func (m *Manifest) MatchCells(cells []gates.Cell) []CellMatch {
 			for pi := range m.Clips[ci].ScheduledPosts {
 				p := &m.Clips[ci].ScheduledPosts[pi]
 				if p.PostPlatform() != platform || used[ref{ci, pi}] {
+					continue
+				}
+				if platform == gates.PlatformSpotify && p.Transport != TransportSpotify {
 					continue
 				}
 				switch {

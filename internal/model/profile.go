@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -33,7 +35,11 @@ type Profile struct {
 	Buffer      BufferConfig     `json:"buffer"`
 	Statics     StaticsConfig    `json:"statics"`
 	Notify      NotifyConfig     `json:"notify"`
-	Extra       map[string]any   `json:"extra,omitempty"`
+	// Spotify, when present, also publishes the full video as a Spotify
+	// video-podcast episode (uploaded by the skill through the Spotify for
+	// Creators web UI; there is no upload API). Absent = no Spotify cell.
+	Spotify *SpotifyConfig `json:"spotify,omitempty"`
+	Extra   map[string]any `json:"extra,omitempty"`
 }
 
 type Brand struct {
@@ -238,6 +244,84 @@ type NotifyConfig struct {
 	MacOS        bool   `json:"macos"`
 }
 
+// PlatformSpotify is the cell platform of the full video's Spotify episode.
+const PlatformSpotify = "spotify"
+
+// SpotifyConfig is the Spotify for Creators show the full video is published
+// to as a video episode. See docs/profile-schema.md.
+type SpotifyConfig struct {
+	// ShowID is the show id from https://creators.spotify.com/pod/show/<id>
+	// (also .../home/show/<id>). Required. It is the account_id of the
+	// spotify cell and of its manifest record.
+	ShowID string `json:"show_id"`
+	// ShowURL is the creator dashboard URL the skill opens in the browser;
+	// empty = https://creators.spotify.com/pod/show/<show_id>/home.
+	ShowURL string `json:"show_url,omitempty"`
+	// NotesUTMSource replaces every utm_source value in the episode notes
+	// (the YouTube description carries utm_source=youtube). Default "spotify".
+	NotesUTMSource string `json:"notes_utm_source,omitempty"`
+}
+
+// spotifyShowRe pulls the show id out of a Spotify for Creators URL.
+var spotifyShowRe = regexp.MustCompile(`creators\.spotify\.com/(?:pod/|home/)?show/([A-Za-z0-9]+)`)
+
+// SpotifyShowIDFromURL extracts the show id from a Spotify for Creators URL
+// (https://creators.spotify.com/home/show/<id>, /pod/show/<id>/...), or "".
+func SpotifyShowIDFromURL(u string) string {
+	m := spotifyShowRe.FindStringSubmatch(u)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+var spotifyIDRe = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+
+// SpotifyEnabled reports whether the profile publishes a Spotify episode.
+func (p *Profile) SpotifyEnabled() bool {
+	return p != nil && p.Spotify != nil && p.Spotify.ShowID != ""
+}
+
+// SpotifyShowURL is the dashboard URL the skill opens: show_url, else the
+// canonical one built from show_id.
+func (p *Profile) SpotifyShowURL() string {
+	if !p.SpotifyEnabled() {
+		return ""
+	}
+	if p.Spotify.ShowURL != "" {
+		return p.Spotify.ShowURL
+	}
+	return "https://creators.spotify.com/pod/show/" + p.Spotify.ShowID + "/home"
+}
+
+// SpotifyUTMSource is the utm_source the episode notes carry.
+func (p *Profile) SpotifyUTMSource() string {
+	if p != nil && p.Spotify != nil && p.Spotify.NotesUTMSource != "" {
+		return p.Spotify.NotesUTMSource
+	}
+	return "spotify"
+}
+
+// FullVideoPlatforms lists the platforms the full video can target: every
+// platform with an OpusClip account, plus spotify when the profile has a
+// spotify block. Sorted.
+func (p *Profile) FullVideoPlatforms() []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for k, v := range p.OpusClip.Accounts {
+		if v != "" {
+			out = append(out, k)
+		}
+	}
+	if p.SpotifyEnabled() {
+		out = append(out, PlatformSpotify)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ErrNoProfile is returned when the named profile file does not exist.
 var ErrNoProfile = errors.New("profile not found")
 
@@ -332,6 +416,12 @@ func (p *Profile) applyDefaults() {
 	p.Transcribe.Model = ExpandHome(p.Transcribe.Model)
 	p.Photos.Osxphotos = ExpandHome(p.Photos.Osxphotos)
 	p.Photos.Library = ExpandHome(p.Photos.Library)
+	if p.Spotify != nil {
+		p.Spotify.ShowID = strings.TrimSpace(p.Spotify.ShowID)
+		if p.Spotify.ShowID == "" {
+			p.Spotify.ShowID = SpotifyShowIDFromURL(p.Spotify.ShowURL)
+		}
+	}
 }
 
 // Validate checks the fields the transport layer cannot run without.
@@ -401,6 +491,17 @@ func (p *Profile) Validate() error {
 		}
 	default:
 		errs = append(errs, fmt.Errorf("cta.static_cta must be newsletter-canon or empty, got %q", p.CTA.StaticCTA))
+	}
+	if p.Spotify != nil {
+		switch {
+		case p.Spotify.ShowID == "":
+			errs = append(errs, errors.New("spotify.show_id is required when spotify is set (the id in https://creators.spotify.com/pod/show/<id>)"))
+		case !spotifyIDRe.MatchString(p.Spotify.ShowID):
+			errs = append(errs, fmt.Errorf("spotify.show_id %q must be letters and digits only", p.Spotify.ShowID))
+		}
+		if strings.ContainsAny(p.Spotify.NotesUTMSource, " &?=#") {
+			errs = append(errs, fmt.Errorf("spotify.notes_utm_source %q must be a bare value (no spaces, &, ?, = or #)", p.Spotify.NotesUTMSource))
+		}
 	}
 	for k, v := range p.Cadence {
 		if v < 0 {

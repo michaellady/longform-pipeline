@@ -506,3 +506,55 @@ func TestFacebookCellsCarryShortTitleAndCaption(t *testing.T) {
 		t.Fatalf("facebook cells must pass the gate: %v %+v", err, vs)
 	}
 }
+
+// The full video's spotify platform becomes one full cell: the show id as
+// account, the full title, the episode notes as description, and it passes
+// the gate with Spotify's limits and no OpusClip account.
+func TestDeriveScheduleSpotifyCell(t *testing.T) {
+	job, d := fixtureJob(t)
+	d.FullVideo.Platforms = []string{"youtube", "spotify"}
+	d.FullVideo.Description = "Big talk.\n\nNewsletter: https://ex.com/n?utm_source=youtube&utm_medium=video\n\n00:00 Intro\n#AI #Talk\n[opus:fake-clip]"
+	prof := testProfile()
+	prof.Spotify = &model.SpotifyConfig{ShowID: "FakeShow1"}
+	if _, err := WriteBrief(job, prof, d, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := ParseGrammar("approve", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 21, 17, 0, 0, 0, time.UTC)
+	sch, err := ApplyDecision(job, prof, d, rec, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sp []gates.Cell
+	for _, c := range sch.Cells {
+		if c.Platform != "spotify" {
+			continue
+		}
+		wantDesc := "Big talk.\n\nNewsletter: https://ex.com/n?utm_source=spotify&utm_medium=video\n\n00:00 Intro"
+		if c.Kind != "full" || c.AccountID != "FakeShow1" || c.Title != d.FullVideo.Title || c.Description != wantDesc || c.Label != SpotifyLabel {
+			t.Errorf("spotify cell: %+v", c)
+		}
+		sp = append(sp, gates.Cell{Kind: c.Kind, ClipID: c.ClipID, ProjectID: c.ProjectID, Platform: c.Platform, AccountID: c.AccountID, Title: c.Title, Description: c.Description, Hashtags: c.Hashtags, DurationSec: c.DurationSec, PublishAt: c.PublishAt, Label: c.Label})
+	}
+	if len(sp) != 1 {
+		t.Fatalf("spotify cells = %d: %+v", len(sp), sch.Cells)
+	}
+	gp := *prof
+	gp.Censor.Mode = "beep"
+	gp.OpusClip.Shorts.Model = "ClipBasic"
+	gp.Timezone = "America/Los_Angeles"
+	vs, err := gates.Validate(&gp, sp, nil, gates.Options{Now: now})
+	if err != nil || len(vs) != 0 {
+		t.Fatalf("spotify cell must pass the gate: %v %+v", err, vs)
+	}
+
+	// Without a spotify block the cell has no account and the gate refuses it.
+	gp.Spotify = nil
+	vs, _ = gates.Validate(&gp, sp, nil, gates.Options{Now: now})
+	if len(vs) != 1 || vs[0].Field != "account_id" || !strings.Contains(vs[0].FixHint, "spotify.show_id") {
+		t.Errorf("unconfigured spotify: %+v", vs)
+	}
+}

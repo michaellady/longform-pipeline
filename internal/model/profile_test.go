@@ -122,3 +122,75 @@ func TestProfileStaticsReferenceDir(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileSpotify(t *testing.T) {
+	t.Setenv("LONGFORM_CONFIG_DIR", t.TempDir())
+	if err := os.MkdirAll(ProfilesDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	load := func(extra string) (*Profile, error) {
+		t.Helper()
+		body := `{"inbox":"/tmp/in","opusclip":{"accounts":{"youtube":"yt-1"}}` + extra + `}`
+		if err := os.WriteFile(filepath.Join(ProfilesDir(), "p.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return LoadProfile("p")
+	}
+	p, err := load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SpotifyEnabled() || p.SpotifyShowURL() != "" {
+		t.Errorf("no spotify block must mean no spotify")
+	}
+	if got := strings.Join(p.FullVideoPlatforms(), ","); got != "youtube" {
+		t.Errorf("FullVideoPlatforms without spotify = %q", got)
+	}
+
+	p, err = load(`,"spotify":{"show_id":"FakeShow123"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.SpotifyEnabled() || p.SpotifyUTMSource() != "spotify" ||
+		p.SpotifyShowURL() != "https://creators.spotify.com/pod/show/FakeShow123/home" {
+		t.Errorf("spotify defaults: %+v url=%q utm=%q", p.Spotify, p.SpotifyShowURL(), p.SpotifyUTMSource())
+	}
+	if got := strings.Join(p.FullVideoPlatforms(), ","); got != "spotify,youtube" {
+		t.Errorf("FullVideoPlatforms with spotify = %q", got)
+	}
+
+	// show_id may be derived from show_url.
+	p, err = load(`,"spotify":{"show_url":"https://creators.spotify.com/home/show/FromURL9","notes_utm_source":"spotify_pod"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Spotify.ShowID != "FromURL9" || p.SpotifyUTMSource() != "spotify_pod" || p.SpotifyShowURL() != "https://creators.spotify.com/home/show/FromURL9" {
+		t.Errorf("show_url derivation: %+v", p.Spotify)
+	}
+
+	for _, bad := range []struct{ extra, want string }{
+		{`,"spotify":{}`, "spotify.show_id is required"},
+		{`,"spotify":{"show_url":"https://example.com/x"}`, "spotify.show_id is required"},
+		{`,"spotify":{"show_id":"bad/id"}`, "letters and digits"},
+		{`,"spotify":{"show_id":"ok1","notes_utm_source":"a&b"}`, "notes_utm_source"},
+	} {
+		if _, err := load(bad.extra); err == nil || !strings.Contains(err.Error(), bad.want) {
+			t.Errorf("%s: got %v, want %q", bad.extra, err, bad.want)
+		}
+	}
+}
+
+func TestSpotifyShowIDFromURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://creators.spotify.com/home/show/Abc123":                  "Abc123",
+		"https://creators.spotify.com/pod/show/Abc123/home":              "Abc123",
+		"https://creators.spotify.com/pod/show/Abc123/episode/e1/wizard": "Abc123",
+		"creators.spotify.com/show/Abc123?x=1":                           "Abc123",
+		"https://open.spotify.com/show/Abc123":                           "",
+		"":                                                               "",
+	} {
+		if got := SpotifyShowIDFromURL(in); got != want {
+			t.Errorf("SpotifyShowIDFromURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

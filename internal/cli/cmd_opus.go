@@ -57,7 +57,7 @@ func opusHelp() int {
   strip-overlay --project P --clip C [--wait] [--force]   free re-render with the screen overlay removed (skipped when none)
   schedule      --cells cells.json [--job DIR] [--profile NAME] [--dry-run]
                                              one JSON line per newly scheduled cell, 1 req/s; static cells are
-                                             skipped (Buffer); --job skips cells DIR/manifest.json already
+                                             skipped (Buffer), spotify cells too (browser upload); --job skips cells DIR/manifest.json already
                                              records and records each new post there as it is made
   unschedule    <scheduleId>                 DELETE /publish-schedules/{id}`)
 	return 64
@@ -390,6 +390,11 @@ func opusSchedule(ctx context.Context, client *opusclip.Client, args []string) i
 		if id.Kind == gates.KindStatic {
 			skipped++
 			fmt.Fprintf(os.Stderr, "schedule: static %s goes through Buffer, skipped\n", cell.ClipID)
+			continue
+		}
+		if gates.IsSpotify(id.cell()) {
+			skipped++
+			fmt.Fprintf(os.Stderr, "schedule: %s is a Spotify episode (no OpusClip route), skipped; upload it with the Spotify for Creators wizard (longform spotify prepare)\n", id.name())
 			continue
 		}
 		if id.recordedID != "" {

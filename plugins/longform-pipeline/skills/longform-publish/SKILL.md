@@ -92,7 +92,8 @@ Profile: `~/.config/longform-pipeline/profiles/<profile>.json` (schema in
 
 `publish_at` is RFC 3339 in `profile.timezone`. `platforms` on `full_video` lists the
 profile account keys (`youtube`, `instagram`, `facebook`, `linkedin_page`, ...) the
-full video goes to. `account_id` is `profile.opusclip.accounts[<platform>]`;
+full video goes to, plus `spotify` when the profile has a `spotify` block (the
+Spotify video-podcast episode; full video only, never a clip or static platform). `account_id` is `profile.opusclip.accounts[<platform>]`;
 `sub_account_id` is `profile.opusclip.sub_accounts[<platform>]` or `""`.
 `full_video.captions` holds the post text for non-YouTube platforms (Facebook
 always: its full-video cell gets `title` = `full_video.title`, `description` =
@@ -121,6 +122,8 @@ every static (see Phase 5b). `docs/draft-schema.md` has every field.
    **and** a non-zero `profile.cadence` entry. A platform with no account id (TikTok and
    X until they are connected in the OpusClip dashboard) gets no cells anywhere: not for
    clips, not for the full video. Note skipped platforms in the brief via a decision.
+   `spotify` is a full-video-only target when `profile.spotify.show_id` is set (it has
+   no OpusClip account and needs no cadence entry).
 6. Overlay (profile `opusclip.strip_overlay: true` only): the binary strips at
    `clipped`, but confirm. If `job.json.opusclip.overlay_stripped` is false and the
    first clip's describe payload in `analysis/opus-transcripts.json` shows an overlay,
@@ -212,7 +215,12 @@ transcript does not make. No em dashes, no "In this video".
   transcript to find emphatic sentences). Mark one `chosen: true`.
 - `platforms`: every target platform (Phase 1 step 5) whose surface accepts the full
   duration (Threads never; LinkedIn and Instagram per the caps the gate knows). Put the
-  doubtful ones in `decisions[]` rather than guessing.
+  doubtful ones in `decisions[]` rather than guessing. Add `spotify` when the profile
+  has a `spotify` block: `brief parse-decision` builds its cell itself (title =
+  `title`, which must stay ≤ 200; description = the episode notes derived from
+  `description` with `utm_source` set to `profile.spotify.notes_utm_source`, the
+  `[opus:]` tag and hashtag-only lines removed, which must stay ≤ 4000 characters;
+  the chapter lines become Spotify chapters). Write no `captions.spotify`.
 - The full video is **scheduled natively as a clip**: the `skipCurate` project returns
   one clip of the full duration (probed: a 60 s file came back as one 60.0 s clip in
   under 3 minutes), so it gets ordinary cells like a short. The YouTube Data API path
@@ -438,7 +446,78 @@ Steps, in order, reading every exit code:
    so `append-post` answers `append-post: duplicate <id> ignored` for each (exit 0) and
    only adds the failed attempts' lines, which give seal's verdict the API error.
    Re-running the approval phase from this step is safe: every cell OpusClip accepted is
-   already in `manifest.json` and is skipped.
+   already in `manifest.json` and is skipped. A `spotify` cell is skipped too
+   (`schedule: spotify full episode is a Spotify episode (no OpusClip route), skipped`):
+   step 5b uploads it.
+5b. **Spotify episode** (only when `schedule.json` has a `platform: "spotify"` cell).
+   Spotify has no creator upload API and OpusClip cannot post there, so you upload it
+   through the Spotify for Creators web UI in the **built-in browser** (the browser pane;
+   the user is signed in there; read the `built-in-browser` skill first). Publishing is
+   public content: nothing is scheduled or published until the operator says so in chat.
+   1. **Already done?** If `manifest.json` already has a `transport: "spotify"` post for
+      the full clip, skip this step. If an earlier run stopped after uploading, the
+      show's episode list may already hold this title (status Draft or Scheduled):
+      continue that episode instead of uploading a second one.
+   2. **Prepare.** `longform spotify prepare --job <jobdir>`: writes
+      `spotify/episode-1080p.mp4` (16:9; a vertical source is pillarboxed over a
+      blurred fill), `spotify/episode-notes.txt` and `spotify/episode-notes.html`, and
+      prints a JSON summary. Exit 65 means the title or notes are over Spotify's limits
+      (200 / 4000 characters): shorten `full_video.title` or `description` in the
+      schedule cell and the draft, re-run. Read `source_kind`: `delivery` means the
+      uncaptioned prepared source was used because no fresh OpusClip export could be
+      fetched (`source_note` says why); tell the operator, and re-run with
+      `--source <file>` if they want the captioned export.
+   3. **Hand the file to the operator.** The browser pane cannot attach a large file and
+      cannot fetch from localhost, so the operator picks it in Spotify's file dialog:
+      ```bash
+      mkdir -p ~/Movies/longform-pipeline
+      cp -c <jobdir>/spotify/episode-1080p.mp4 ~/Movies/longform-pipeline/<slug>-spotify.mp4
+      ```
+   4. **Open the show.** Navigate the browser pane to `profile.spotify.show_url` (default
+      `https://creators.spotify.com/pod/show/<show_id>/home`). Read the episode list:
+      note the latest episode number (the new one is that + 1). Click **+** (new
+      episode), then **Upload**. Ask the operator in chat to choose
+      `~/Movies/longform-pipeline/<slug>-spotify.mp4` in the "Select a file" dialog
+      (file input `#uploadAreaInput`) and wait until they say it is selected and the
+      upload has started.
+   5. **Details.** Title = the spotify cell's `title`. Description: switch the
+      description editor to **HTML**, then set the `textarea[name="description"]` to
+      the contents of `spotify/episode-notes.html` with the native setter so React sees
+      it:
+      ```js
+      const ta = document.querySelector('textarea[name="description"]');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, NOTES_HTML);
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ```
+      (`NOTES_HTML` = the file's text as a JSON string literal.) Confirm Spotify shows
+      "Timestamps detected" when the notes have chapter lines. Episode type Full, season
+      number as the show uses it, episode number = latest + 1. Content checks
+      (explicit etc.) stay **No** unless the transcript warrants otherwise (then add a
+      decision line to your report). Thumbnail: take Spotify's automatic frame (images
+      cannot be pushed from the pane; the auto thumbnail is acceptable). Comments On.
+   6. **Review and time.** Go to **Review**. The schedule picker takes the **browser's
+      local time**, not UTC (a UTC time was once typed as local). Read the browser's
+      zone with
+      `Intl.DateTimeFormat().resolvedOptions().timeZone` and `new Date().getTimezoneOffset()`,
+      convert the cell's `publish_at` (UTC) into that zone, and choose **Schedule** with
+      that date, hour, minute and AM/PM. If `publish_at` is already past, ask the
+      operator (Now, or a new time) instead of guessing. Screenshot the Review step and
+      show the operator, in chat: title, episode number, the time in UTC, in
+      `profile.timezone` and in the browser's zone, and the file name. Then ask for a
+      go-ahead.
+   7. **Publish only after the operator confirms in chat**: click **Schedule** (or
+      **Publish** when they chose Now). The episode list then shows the episode as
+      "Scheduled"; its URL `/pod/show/<show_id>/episode/<episode_id>/wizard` carries
+      the episode id. Public share links exist only once it is live.
+   8. **Record.** One line to `longform manifest append-post --job <jobdir>`:
+      ```bash
+      jq -c --arg id "<episode_id>" --arg url "<wizard URL>" --arg local "<time as shown>" \
+        '{cell: (.cells[] | select(.platform == "spotify")), transport: "spotify", post_id: $id,
+          response: {status: "Scheduled", publish_local: $local, url: $url}}' \
+        <jobdir>/review/schedule.json | longform manifest append-post --job <jobdir>
+      ```
+      `post_id` is required: without a `transport: "spotify"` record the seal reports
+      the cell missing.
 6. Statics through Buffer. In this order, for the statics in `schedule.json`:
    1. **Gate.** `longform gate statics --job <jobdir>`: exit 0 or stop. It
       checks each scheduled caption against its `visual_review`, the image
@@ -504,13 +583,14 @@ Steps, in order, reading every exit code:
    and drop the native YouTube full-video cell before step 5.
 8. `longform manifest seal --job <jobdir>` checks that every cell in
    `review/schedule.json` has a recorded post in `manifest.json` (a `scheduleId` for
-   OpusClip cells, the Buffer `post_id` for statics), records the clips left in the
+   OpusClip cells, the Buffer `post_id` for statics, the episode id of a
+   `transport: "spotify"` line for the Spotify cell), records the clips left in the
    backlog as `held`, and moves the job `approved -> scheduled`.
    - exit 0: continue (also when the job was already sealed).
    - exit 65: stdout lists the cells with no post, one JSON object per line
      (`clip_id`, `platform`, `label`, `reason`). Those cells were not posted: fix them
      and re-run step 5 (OpusClip; with `--job` the whole `schedule.json` is fine, the
-     recorded cells are skipped) or step 6 (Buffer) for exactly those cells, then seal
+     recorded cells are skipped), step 5b (Spotify) or step 6 (Buffer) for exactly those cells, then seal
      again. Pass `--allow-missing` only if the user decided to skip them; the skipped
      cells are recorded under `job.extra.seal.missing`.
    - any other exit: stop and report.
@@ -534,6 +614,14 @@ held count, anything the gate rewrote.
   `schedule.json` with `--job` (recorded cells and statics are skipped, so only the
   listed OpusClip cells post, each recorded as it is made) and step 6 for the listed
   statics only, append their Buffer lines, and seal again.
+- **Spotify step interrupted**: never upload twice. Check `manifest.json` for a
+  `transport: "spotify"` post, then the show's episode list for the title; an
+  episode left as a draft is finished from its wizard URL, a scheduled one only
+  needs step 5b.8. `longform spotify prepare` is idempotent (it reuses the
+  downloaded export and skips the encode when the file is up to date).
+- **Profile has no `spotify` block but the draft lists `spotify`**: the gate refuses
+  the cell (no account). Hold it (`hold spotify`) or add the show with
+  `/longform-pipeline:longform-setup`.
 - **Re-run of the draft phase on a `drafted` job**: exit immediately; the user must
   `reject` first or edit `draft.json` by hand and run `longform brief render` again.
 - **Fewer candidates than slots**: fill what you can; never lower the score floor below

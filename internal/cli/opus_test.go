@@ -591,8 +591,21 @@ func TestOpusScheduleRecordsEachPostAndSkipsStatics(t *testing.T) {
 	}
 	path := writeScheduleFile(t, dir, cells)
 
+	// A spotify cell is never sent to OpusClip.
+	withSpotify := append(append([]map[string]any{}, cells...), map[string]any{"kind": "full", "project_id": "PF", "clip_id": "F", "platform": "spotify", "account_id": "FakeShow1", "title": "full", "description": "notes", "publish_at": "2026-11-01T16:00:00Z", "label": "spotify full episode"})
+	spPath := filepath.Join(t.TempDir(), "spotify-cells.json")
+	if b, err := json.Marshal(withSpotify); err != nil {
+		t.Fatal(err)
+	} else if err := os.WriteFile(spPath, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spOut, errOut, code := captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", spPath, "--dry-run"}) })
+	if code != 0 || !strings.Contains(errOut, "schedule: spotify full episode is a Spotify episode (no OpusClip route), skipped") || !strings.Contains(errOut, "schedule: 4 scheduled, 2 skipped (dry run") || strings.Contains(spOut, `"spotify"`) {
+		t.Fatalf("dry run with a spotify cell: exit %d\nstdout:\n%s\nstderr:\n%s", code, spOut, errOut)
+	}
+
 	// Without --job a static is skipped too, and the run exits 0.
-	_, errOut, code := captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", path, "--dry-run"}) })
+	_, errOut, code = captureStdio(t, func() int { return runOpus([]string{"schedule", "--cells", path, "--dry-run"}) })
 	if code != 0 || !strings.Contains(errOut, "schedule: static s1 goes through Buffer, skipped\n") || !strings.Contains(errOut, "schedule: 4 scheduled, 1 skipped (dry run") {
 		t.Fatalf("dry run with a static: exit %d\n%s", code, errOut)
 	}

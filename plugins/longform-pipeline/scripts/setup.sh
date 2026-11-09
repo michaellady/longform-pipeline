@@ -597,6 +597,35 @@ ask_statics() {
   fi
 }
 
+# ask_spotify sets SPOTIFY_ID and SPOTIFY_URL: the Spotify for Creators show
+# the full video is also published to as a video episode (optional). Enter keeps
+# the profile's show; "-" removes it; blank with none set skips it.
+ask_spotify() {
+  say "Spotify video podcast (optional): the full video also goes out as an episode of your"
+  say "Spotify for Creators show. There is no upload API, so the publish skill uploads it in"
+  say "the browser and you pick the file once per episode."
+  note "Paste the show URL (https://creators.spotify.com/home/show/<id>) or just the id."
+  note "Blank = no Spotify; - removes an existing show."
+  local def
+  def=$(pdefault .spotify.show_url "")
+  [[ -n "$def" ]] || def=$(pdefault .spotify.show_id "")
+  while :; do
+    ask_default SPOTIFY_IN "Spotify show URL or id:" "$def"
+    SPOTIFY_ID="" SPOTIFY_URL=""
+    if [[ -z "$SPOTIFY_IN" || "$SPOTIFY_IN" == - ]]; then
+      return 0
+    fi
+    if [[ "$SPOTIFY_IN" =~ creators\.spotify\.com/(pod/|home/)?show/([A-Za-z0-9]+) ]]; then
+      SPOTIFY_ID="${BASH_REMATCH[2]}" SPOTIFY_URL="$SPOTIFY_IN"
+    elif [[ "$SPOTIFY_IN" =~ ^[A-Za-z0-9]+$ ]]; then
+      SPOTIFY_ID="$SPOTIFY_IN"
+    fi
+    [[ -n "$SPOTIFY_ID" ]] && break
+    warn "not a Spotify for Creators show URL or id (letters and digits); try again, blank to skip"
+  done
+  note "Spotify show id: $SPOTIFY_ID"
+}
+
 run_wizard() {
 
 TOTAL_STAGES=12
@@ -823,6 +852,7 @@ ask_default LM_DISCORD "Lead magnet URL 'discord' (blank = none):" "$(pdefault .
 ask_default DM_KEYWORD "Comment-to-DM keyword for instagram/tiktok (blank = none):" "$(pdefault .cta.comment_to_dm.instagram "")"
 ask_statics
 if [[ "$STATICS_ENGINE" == templates ]]; then mkdir -p "$(expand_tilde "$TEMPLATES_DIR")"; fi
+ask_spotify
 
 # The profile is rebuilt on top of the existing file: every field this wizard
 # asks about is set from the answers, and anything else (hand-set values,
@@ -856,6 +886,7 @@ jq -n --slurpfile old "$OLD_PROFILE" \
   --arg engine "$STATICS_ENGINE" --arg formats "$STATICS_FORMATS" --arg carousel "$CAROUSEL_DIR" \
   --arg refdir "$REFERENCE_DIR" --argjson tokens "$BRAND_TOKENS" --argjson ftags "$FORMAT_TAGS" \
   --arg static_cta "$STATIC_CTA" --arg cta_script "$CTA_SCRIPT" \
+  --arg sp_id "${SPOTIFY_ID:-}" --arg sp_url "${SPOTIFY_URL:-}" \
   'def csv: split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0));
    def dflt(p; v): if getpath(p) == null then setpath(p; v) else . end;
    def setor(p; v): if v == "" then delpaths([p]) else setpath(p; v) end;
@@ -901,6 +932,12 @@ jq -n --slurpfile old "$OLD_PROFILE" \
    | (if $engine == "newsletter-carousel" then .statics.carousel_dir = $carousel else . end)
    | (if $engine == "custom-html" then setor(["statics","reference_dir"]; $refdir) else . end)
    | dflt(["notify","macos"]; true) | setor(["notify","slack_channel"]; $slack)
+   | (if $sp_id == "" then delpaths([["spotify"]])
+      else .spotify.show_id = $sp_id
+        | (if $sp_url != "" then .spotify.show_url = $sp_url
+           elif ((.spotify.show_url // "") | contains($sp_id)) then .
+           else delpaths([["spotify","show_url"]]) end)
+      end)
   ' > "$PROFILE_FILE.tmp" && mv "$PROFILE_FILE.tmp" "$PROFILE_FILE"
 printf '  %s✓ wrote%s %s\n' "$GREEN" "$RESET" "$PROFILE_FILE"
 if [[ "$STATICS_ENGINE" == templates ]]; then
