@@ -36,6 +36,7 @@ put anything extra under `extra`.
 | `buffer` | object | `{}` | See Buffer. |
 | `statics` | object | `{}` | See Statics. |
 | `notify` | object | `{macos:false}` | See Notify. |
+| `spotify` | object | omitted | See Spotify. Present = the full video is also published as a Spotify video-podcast episode. |
 | `extra` | object | omitted | Free-form; the ticket 0 probes write `youtube_native_chapters` here. |
 
 ## `brand`
@@ -157,6 +158,26 @@ put anything extra under `extra`.
 | `slack_channel` | string | omitted | Channel id the brief link is posted to; the webhook itself lives in `~/.config/longform-pipeline/env` as `SLACK_WEBHOOK_URL`. |
 | `macos` | bool | `false` | Fire a macOS notification on each event. |
 
+## `spotify`
+
+Optional. When present, the full video is also published as a video episode on a
+Spotify for Creators show. Spotify has no creator upload API (its video API is for
+partner hosts only) and OpusClip cannot post there, so the transport is the
+publish skill driving the Spotify for Creators web UI in the browser:
+`longform spotify prepare` makes the 16:9 episode file and notes, the operator
+picks the file in Spotify's file dialog, and the skill records the episode with
+`transport: "spotify"` (see `docs/manifest.md`). With the block present, `spotify`
+is a valid entry in the draft's `full_video.platforms` (only there: a clip or
+static cell on `spotify` fails the gate), its cell's `account_id` is `show_id`, and
+the gate checks Spotify's limits (title <= 200, notes <= 4000 characters). Cadence
+for `spotify` defaults to one episode a day; `cadence.spotify` overrides it.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `show_id` | string | required | The show id, letters and digits: the `<id>` in `https://creators.spotify.com/pod/show/<id>/home` (or `/home/show/<id>`). Validation fails when the block is present without it. If only `show_url` is set, the id is read from it. |
+| `show_url` | URL | `https://creators.spotify.com/pod/show/<show_id>/home` | The dashboard page the skill opens in the browser. |
+| `notes_utm_source` | string | `spotify` | Replaces every `utm_source` value in the episode notes (the YouTube description carries `utm_source=youtube`). A bare value: no spaces, `&`, `?`, `=` or `#`. |
+
 ## `photos`
 
 The Photos album feed, next to the iCloud Drive `inbox`. The phone adds a
@@ -232,7 +253,8 @@ read the Photos library" and `longform photos-watch` exits `69`.
     "carousel_dir": "~/dev/claude-social-media-skills/carousel-newsletter",
     "formats": ["carousel", "quote"]
   },
-  "notify": { "slack_channel": "C0123456789", "macos": true }
+  "notify": { "slack_channel": "C0123456789", "macos": true },
+  "spotify": { "show_id": "07Ge0shE5kKbT16fURs8BK" }
 }
 ```
 

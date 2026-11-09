@@ -37,7 +37,7 @@ shape is the vendored one plus the fields marked *new*. Every write is atomic
           "platform": "facebook",             // new
           "account_id": "6946d924a163ebb2222f505b",
           "sub_account_id": "913906768469231",
-          "transport": "buffer",              // new, optional: absent = OpusClip; "buffer" for a static
+          "transport": "buffer",              // new, optional: absent = OpusClip; "buffer" for a static; "spotify" for the Spotify episode
           "scheduled_at_utc": "2026-05-19T16:00:00Z",
           "api_response": { "data": { "scheduleId": "1779159097402OmCL-FACEBOOK_PAGE", "hasConflict": false } },
           "schedule_id": "1779159097402OmCL-FACEBOOK_PAGE",   // new: the line's post_id, else api_response.data.scheduleId, else the line's schedule_id
@@ -68,7 +68,7 @@ All take `--job <jobdir>` (or `--manifest <path>` to name the file directly).
 |---|---|---|
 | `init [--project ID] [--source-video ID] [--source-title T] [--source-url U] [--duration-seconds N] [--profile P] [--force]` | create the manifest; idempotent unless `--force` | — |
 | `ensure-clip --clip-id ID [--title T] [--description D] [--score N] [--duration-sec N] [--theme S] [--status post\|held] [--curated-at RFC3339]` | add a clip entry if missing; existing entries are untouched | — |
-| `append-post [--file lines.jsonl]` | read the JSON lines `longform opus schedule` emits (`{"cell": <cell>, "schedule_id": "...", "response": <verbatim>, "error": "..."}`) from stdin or `--file`; ensure each clip from its cell; append one scheduled post per line with the response verbatim, the cell's `project_id`, and `schedule_id` = the line's `post_id`, else the line's `schedule_id` (not when `error` is set), else `response.data.scheduleId`. A Buffer static's line adds `"transport":"buffer","post_id":"<Buffer post id>"`: the Buffer reply shape is not wired into the binary, so the skill names the id. Idempotent per id: a line whose id is already recorded (in the manifest or earlier in the same input) is not appended again, stderr `append-post: duplicate <id> ignored`, exit 0; a line without an id (a failed call) is always appended. The whole input is read before the manifest is loaded: `opus schedule --job` records each post in the manifest itself as it is made (`manifest.RecordLine`, same append logic), so its piped lines come back as duplicates | — |
+| `append-post [--file lines.jsonl]` | read the JSON lines `longform opus schedule` emits (`{"cell": <cell>, "schedule_id": "...", "response": <verbatim>, "error": "..."}`) from stdin or `--file`; ensure each clip from its cell; append one scheduled post per line with the response verbatim, the cell's `project_id`, and `schedule_id` = the line's `post_id`, else the line's `schedule_id` (not when `error` is set), else `response.data.scheduleId`. A Buffer static's line adds `"transport":"buffer","post_id":"<Buffer post id>"`: the Buffer reply shape is not wired into the binary, so the skill names the id. A Spotify episode's line is `{"cell": <the spotify cell>, "transport":"spotify", "post_id":"<episode id>", "response": <what the wizard showed>}`, the episode id read from the wizard URL `/pod/show/<show_id>/episode/<episode_id>/wizard`. Idempotent per id: a line whose id is already recorded (in the manifest or earlier in the same input) is not appended again, stderr `append-post: duplicate <id> ignored`, exit 0; a line without an id (a failed call) is always appended. The whole input is read before the manifest is loaded: `opus schedule --job` records each post in the manifest itself as it is made (`manifest.RecordLine`, same append logic), so its piped lines come back as duplicates | — |
 | `count-scheduled` | total (clip × channel) records (`0` when no manifest) | integer |
 | `find-clip --clip-id ID` | one clip's full record; exit 65 when absent | JSON object |
 | `conflicts` | posts whose `api_response.data.hasConflict` is true (LinkedIn reports a structural false positive because its org page and person profile share one `postAccountId`; treat LinkedIn conflicts as advisory) | JSON array (with `clip_title`) |
@@ -76,6 +76,22 @@ All take `--job <jobdir>` (or `--manifest <path>` to name the file directly).
 | `list-by-channel <label substring>` | posts whose label contains the substring (case-insensitive) | JSON array (with `clip_title`) |
 | `expire [--days N] [--now RFC3339]` | mark held clips older than N days as `expired`, persist, print them; without `--days` N is the job profile's `backlog_days` (needs `--job`) | JSON array |
 | `seal [--allow-missing] [--now RFC3339]` | `approved -> scheduled` once every approved cell has a recorded post; adds the backlog's clips as `held`; exit 65 lists missing cells (see `cli-contract.md`) | result JSON, or verdict lines |
+
+### Spotify episode records
+
+The full video's Spotify episode is uploaded by the publish skill through the
+Spotify for Creators web UI (there is no creator upload API), then recorded by
+hand with `append-post`, for example:
+
+```json
+{"cell":{"kind":"full","clip_id":"F1","project_id":"PF","platform":"spotify","account_id":"07Ge0shE5kKbT16fURs8BK","title":"...","description":"<episode notes>","duration_sec":1840,"publish_at":"2026-11-10T17:00:00Z","label":"spotify full episode"},"transport":"spotify","post_id":"<episode id>","response":{"status":"Scheduled","publish_local":"Nov 10, 2026 9:00 AM PST","url":"https://creators.spotify.com/pod/show/07Ge0shE5kKbT16fURs8BK/episode/<episode id>/wizard"}}
+```
+
+It lands under the full video's clip entry with `platform: "spotify"`,
+`account_id` = the show id and `schedule_id` = the episode id. `seal` accepts
+only a `transport: "spotify"` record for a spotify cell; `monitor` treats it
+like a Buffer post (`manifest_only`: nothing is read back). Public share links
+exist only once the episode is live, so `response` holds what the wizard showed.
 
 Held clips enter the manifest at `seal` (the draft's `held` clips and the
 rows `approve except` held) or through `ensure-clip --status held`. `expire`

@@ -254,3 +254,27 @@ func TestMain_RoundTrip(t *testing.T) {
 		t.Errorf("summary missing: %s", stderr.String())
 	}
 }
+
+// The spotify episode takes the full video's slot, needs no cadence entry,
+// and is skipped when the profile has no spotify block.
+func TestPropose_SpotifyFullCell(t *testing.T) {
+	p := testProfile()
+	p.Spotify = &model.SpotifyConfig{ShowID: "FakeShow1"}
+	approved := time.Date(2026, 10, 21, 17, 30, 0, 0, time.UTC)
+	cells := []gates.Cell{
+		{Kind: gates.KindFull, ClipID: "full", Platform: "youtube"},
+		{Kind: gates.KindFull, ClipID: "full", Platform: "spotify", AccountID: "FakeShow1"},
+	}
+	out, _, err := Propose(p, cells, nil, Options{ApprovedAt: approved, Now: approved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at(t, out[0]) != "2026-10-22T16:00:00Z" || at(t, out[1]) != "2026-10-22T16:00:00Z" {
+		t.Errorf("spotify shares the full slot: %s %s", at(t, out[0]), at(t, out[1]))
+	}
+	p.Spotify = nil
+	out, _, _ = Propose(p, cells, nil, Options{ApprovedAt: approved, Now: approved})
+	if out[1].Status != gates.StatusSkipped {
+		t.Errorf("unconfigured spotify must be skipped: %+v", out[1])
+	}
+}

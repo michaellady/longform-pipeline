@@ -61,5 +61,13 @@
       "title": { "max_runes": 100, "required": true },
       "description": { "max_runes": 300 }
     }
+  },
+  "spotify": {
+    "post_text_field": "description",
+    "title_source": "separate",
+    "fields": {
+      "title": { "max_runes": 200, "required": true },
+      "description": { "max_runes": 4000, "required": true }
+    }
   }
 }

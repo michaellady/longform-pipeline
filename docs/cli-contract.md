@@ -521,6 +521,10 @@ the fake-server checks and one-off re-schedules use that form.
   through Buffer): stderr `schedule: static <clip_id> goes through Buffer,
   skipped`, nothing on stdout, not a failure. This holds with or without
   `--job`.
+- A cell with `platform: "spotify"` is never sent either (OpusClip cannot
+  post to Spotify): stderr `schedule: <label> is a Spotify episode (no
+  OpusClip route), skipped; ...`, counted in `skipped`. The skill uploads it
+  with `longform spotify prepare` and the browser wizard.
 - With `--job`, before posting it reads `<jobdir>/manifest.json` (absent =
   nothing recorded; the directory itself must exist, else exit `65`) and
   skips every cell that already has a recorded post by the rule seal checks
@@ -560,6 +564,54 @@ the fake-server checks and one-off re-schedules use that form.
   left is a process killed between OpusClip's reply and the manifest write
   of that one cell.
 
+### `longform spotify prepare`
+
+```
+longform spotify prepare --job <jobdir|jobid> [--source <video>] [--encoder auto|videotoolbox|libx264] [--force]
+```
+
+Prepares the full video's Spotify video-podcast episode for the browser
+upload (Spotify has no creator upload API). Writes, under `<job>/spotify/`:
+
+- `episode-1080p.mp4`: 16:9 H.264 High, AAC, faststart. A source that is not
+  16:9 (the vertical 1080x1920 OpusClip export) is pillarboxed onto
+  1920x1080 over a blurred, darkened, cropped copy of itself (`boxblur=40:2`,
+  `eq=brightness=-0.12`) at 30 fps, 8 Mb/s (12 Mb/s peak); a source wider than
+  16:9 is letterboxed the same way. A 16:9 H.264 source is remuxed without
+  re-encoding; a 16:9 source in another codec is re-encoded at 1080p. AAC
+  audio is copied, anything else becomes AAC 192k. `--encoder auto` (default)
+  uses `h264_videotoolbox` when this Mac's ffmpeg passes its test encode,
+  else `libx264` CRF 18 (always on non-darwin); `videotoolbox` requires it.
+- `episode-notes.txt`: `review/draft.json` `full_video.description` with
+  every `utm_source` value replaced by the profile's
+  `spotify.notes_utm_source` (default `spotify`), the `[opus:<id>]` tag and
+  hashtag-only lines removed, blank-line runs collapsed. Timestamp lines
+  (`00:00 Intro`) stay: Spotify turns them into chapters.
+- `episode-notes.html`: the same notes for Spotify's HTML description mode:
+  paragraphs `<p>`, line breaks `<br>`, URLs as links, `&`, `<`, `>` escaped.
+- `source-full.mp4`: the downloaded export, when one was downloaded.
+
+Source, unless `--source`: a download from an earlier run; else a fresh
+signed `uriForExport` for the full clip (`GET` clip describe, needs
+`OPUSCLIP_API_KEY`); else `clips.json` `uri_export` unless its `Expires=` /
+`X-Goog-Expires` says it has expired; else `delivery.mp4` (the uncaptioned
+prepared source), with `source_note` saying why. Idempotent: the video is
+re-made only when missing, older than its source, or with `--force` (which
+also re-downloads); the notes files are rewritten only when their content
+changes. ffmpeg's command lines and stderr go to stderr.
+
+stdout is one JSON object: `video`, `notes_text`, `notes_html`, `source`,
+`source_kind` (`flag` | `cached-export` | `opusclip-export` |
+`clips-uri-export` | `delivery`), `source_note`, `width`, `height`,
+`duration_sec`, `video_codec`, `audio_codec`, `encoder` (when re-encoded),
+`reencoded`, `video_skipped`, `notes_skipped`, `title`, `title_chars`,
+`notes_chars`, `notes_html_chars`, `problems` (not 16:9, not h264, no audio,
+title empty or over 200, notes over 4000).
+
+Exit: `0` ok, `64` usage, `65` no job or draft, or title/notes over Spotify's
+limits (the summary is still printed), `69` ffmpeg/ffprobe not found, `70`
+ffmpeg failed, `75` another process holds the job lock.
+
 ### `longform manifest seal`
 
 ```
@@ -576,7 +628,10 @@ Run by the skill as the last approval step, before `notify --event scheduled`.
   `clip_id` and platform, a non-empty `schedule_id` and no `error`. For an
   OpusClip cell that id is the `scheduleId` from `opus schedule`; for a
   static it is the Buffer post id the skill wrote as `post_id` on the
-  `append-post` line (`"transport":"buffer"`). Each post satisfies one cell
+  `append-post` line (`"transport":"buffer"`); for a spotify cell it must be
+  a `"transport":"spotify"` record whose `post_id` is the episode id, and
+  the verdict's `fix_hint` says to upload through the Spotify for Creators
+  wizard and append that line. Each post satisfies one cell
   only, so a doubled append never hides a missing cell. This is
   `manifest.MatchCells`, the same rule `opus schedule --job` skips by.
 - Missing cells and no `--allow-missing`: one verdict object per line on

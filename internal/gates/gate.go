@@ -165,19 +165,20 @@ func validateAccount(p *model.Profile, c Cell) []Verdict {
 	}
 	var out []Verdict
 	want := AccountFor(p, platform, c.Kind)
+	hint := "connect the account in OpusClip and add it to the profile"
+	if platform == PlatformSpotify {
+		hint = "spotify takes only the full video; set spotify.show_id in the profile (longform-setup) and account_id to it"
+	}
 	switch {
 	case want == "":
 		out = append(out, Verdict{c.ClipID, c.Label, platform, "account_id",
-			fmt.Sprintf("profile has no account for %s %s cells", platform, c.Kind),
-			"connect the account in OpusClip and add it to the profile"})
+			fmt.Sprintf("profile has no account for %s %s cells", platform, c.Kind), hint})
 	case c.AccountID == "":
 		out = append(out, Verdict{c.ClipID, c.Label, platform, "account_id",
-			"account_id is empty",
-			"connect the account in OpusClip and add it to the profile"})
+			"account_id is empty", hint})
 	case c.AccountID != want:
 		out = append(out, Verdict{c.ClipID, c.Label, platform, "account_id",
-			fmt.Sprintf("account_id %q is not the profile's %s account %q", c.AccountID, platform, want),
-			"connect the account in OpusClip and add it to the profile"})
+			fmt.Sprintf("account_id %q is not the profile's %s account %q", c.AccountID, platform, want), hint})
 	}
 	if SubAccountRequired[platform] && c.Kind != KindStatic && c.SubAccountID == "" {
 		out = append(out, Verdict{c.ClipID, c.Label, platform, "sub_account_id",

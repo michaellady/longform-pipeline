@@ -66,7 +66,9 @@ type Clip struct {
 // scheduler's reply verbatim; schedule_id is extracted from
 // response.data.scheduleId at append time so readers need not know the
 // scheduler's shape. For a Buffer post (transport "buffer") schedule_id holds
-// the Buffer post id the appending line named in post_id.
+// the Buffer post id the appending line named in post_id; for a Spotify
+// episode (transport "spotify") it holds the episode id from the Spotify for
+// Creators wizard URL (/pod/show/<show_id>/episode/<episode_id>/wizard).
 type ScheduledPost struct {
 	ClipID         string          `json:"clip_id"`
 	ProjectID      string          `json:"project_id,omitempty"`
@@ -74,7 +76,7 @@ type ScheduledPost struct {
 	Platform       string          `json:"platform,omitempty"`
 	AccountID      string          `json:"account_id,omitempty"`
 	SubAccountID   string          `json:"sub_account_id,omitempty"`
-	Transport      string          `json:"transport,omitempty"` // "" = OpusClip; "buffer"
+	Transport      string          `json:"transport,omitempty"` // "" = OpusClip; "buffer"; "spotify"
 	ScheduledAtUTC string          `json:"scheduled_at_utc"`
 	APIResponse    json.RawMessage `json:"api_response,omitempty"`
 	ScheduleID     string          `json:"schedule_id,omitempty"`
@@ -86,6 +88,9 @@ type ScheduledPost struct {
 const (
 	TransportOpusClip = "opusclip"
 	TransportBuffer   = "buffer"
+	// TransportSpotify is a Spotify for Creators episode the skill uploaded
+	// in the browser (no API): post_id is the episode id.
+	TransportSpotify = "spotify"
 )
 
 // IsOpusClip reports whether the post went through the OpusClip scheduler
@@ -237,14 +242,16 @@ func ExtractScheduleID(raw json.RawMessage) string {
 
 // ScheduleLine is one JSON line emitted by `longform opus schedule`, or
 // written by the skill for a Buffer post: {"cell", "response",
-// "transport":"buffer", "post_id":"<Buffer post id>"}. The Buffer response
+// "transport":"buffer", "post_id":"<Buffer post id>"}, or for a Spotify
+// episode: {"cell", "response":<what the wizard showed>,
+// "transport":"spotify", "post_id":"<episode id>"}. The Buffer response
 // shape is not wired here (it was never probed); the skill names the id.
 type ScheduleLine struct {
 	Cell       gates.Cell      `json:"cell"`
 	Response   json.RawMessage `json:"response"`
 	Error      string          `json:"error,omitempty"`
 	ScheduleID string          `json:"schedule_id,omitempty"` // `opus schedule` echoes it
-	Transport  string          `json:"transport,omitempty"`   // "" | opusclip | buffer
+	Transport  string          `json:"transport,omitempty"`   // "" | opusclip | buffer | spotify
 	PostID     string          `json:"post_id,omitempty"`     // explicit id; wins over the response
 }
 

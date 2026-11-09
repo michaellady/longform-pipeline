@@ -19,6 +19,14 @@ func (t Tools) Remux(dir, in, out string) error {
 	return err
 }
 
+// RunFFmpeg runs ffmpeg with cwd = dir and the given arguments, logging like
+// every other op. For callers outside media that build their own command
+// line (spotify prepare).
+func (t Tools) RunFFmpeg(dir string, args ...string) error {
+	_, err := t.run(dir, t.FFmpeg, args...)
+	return err
+}
+
 // Encoder and hwaccel names as ffmpeg spells them; prepare records them in
 // job.extra.prepare.
 const (

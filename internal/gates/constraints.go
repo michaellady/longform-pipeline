@@ -120,6 +120,8 @@ func LabelToPlatform(label string) string {
 		return "bluesky"
 	case strings.HasPrefix(label, "PINTEREST"):
 		return "pinterest"
+	case strings.HasPrefix(strings.ToUpper(label), "SPOTIFY"):
+		return "spotify"
 	default:
 		return "unknown"
 	}
